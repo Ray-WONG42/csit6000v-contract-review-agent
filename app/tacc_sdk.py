@@ -127,7 +127,7 @@ def run_remote(operation, event, checkpoint=None, **arguments):
         staging.mkdir()
         request = staging / "request.json"
         try:
-            for name in ("tuxiv.conf", "remote.py", "job.sh"):
+            for name in ("tuxiv.conf", "remote.py", "job.sh", "resolve_endpoint.py"):
                 shutil.copyfile(ROOT / "tacc" / "client" / name, staging / name)
             shutil.copyfile(ROOT / "engine.py", staging / "engine.py")
             shutil.copyfile(ROOT / "prompt_loader.py", staging / "prompt_loader.py")

@@ -286,6 +286,9 @@ Tool execution never grants the model another user's permissions. Web/contract t
    Only public HTTPS pages are allowed; private addresses, credentials in URLs and non-443 ports are rejected.
    For cluster clients ensure the course internal host is reachable from the client job, not your browser.
    Bing RSS has limited search quality; an optional Brave key improves provider choice but needs its own access.
+   Course aliases such as `10-0-1-10` may have no DNS records. The SDK client resolves node names before
+   entering the course runtime and converts the course's encoded private IPv4 aliases when DNS is absent.
+   `Name or service not known` is an address-resolution failure, not evidence of exhausted GPU memory.
 8. **Only ordinary chat fails in demo.** Expected: demo does not imitate a general LLM. Use the documented
    slash-command self-test or configure a real TACC backend.
 9. **Missing frontend / Node absent.** Ensure `web/dist/index.html` and its hashed assets were committed.

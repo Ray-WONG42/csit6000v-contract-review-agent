@@ -59,8 +59,14 @@ These items and the corresponding user actions appear in the README FAQ.
 
 ## External validation still required
 
+Post-packaging integration update: a real TACC Qwen connection probe succeeded
+after fixing unresolvable course Slurm node aliases. The SDK client now resolves
+addresses outside the course runtime and supports encoded private IPv4 node names.
+The successful probe verifies an actual model JSON response, not general-chat
+multi-step tool planning, contract quality, mailbox delivery or cloud deployment.
+
 - **Real TACC:** own course authorization, queue resources and adequate free GPU memory.
-  Earlier submissions encountered memory shortages and scheduling delays. No live
+  Earlier submissions encountered memory shortages, scheduling delays and a node-name resolution failure. The connection probe now passes. No live
   general-chat/tool-planning or custom-review result is claimed by this packaging run.
   Run the connection probe, `demo.py --live`, and `scripts/tacc_review_smoke.py` after service readiness.
 - **Outlook:** complete authorization with a dedicated mailbox and actually verify receiving/replying.

@@ -15,7 +15,9 @@ def test_client_submission_only_copies_needed_files(monkeypatch, tmp_path):
             checkpoints[key] = value
         return checkpoints.get(key)
     def fake_submit(staging):
-        assert {p.name for p in staging.iterdir()} == {"job.sh", "tuxiv.conf", "remote.py", "engine.py", "request.json", "prompt_loader.py", "prompts"}
+        assert {p.name for p in staging.iterdir()} == {"job.sh", "tuxiv.conf", "remote.py", "resolve_endpoint.py", "engine.py", "request.json", "prompt_loader.py", "prompts"}
+
+        assert (staging / 'resolve_endpoint.py').is_file()
         request = json.loads((staging / "request.json").read_text())
         assert request["base_url"] == "http://10-0-1-14:8000/v1"
         assert request["operation"] == "review"

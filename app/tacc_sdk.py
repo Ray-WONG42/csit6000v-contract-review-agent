@@ -31,6 +31,9 @@ def _sdk_once(arguments, cwd=None, timeout=180):
     process = subprocess.run(command, cwd=cwd, capture_output=True, timeout=timeout)
     output = process.stdout.replace(b"\0", b"").decode("utf-8", errors="replace")
     diagnostics = process.stderr.replace(b"\0", b"").decode("utf-8", errors="replace")
+    # A returned job ID is authoritative even if the CLI subsequently reports an error.
+    if arguments[0] == "submit" and JOB_ID.search(output + "\n" + diagnostics):
+        return output + "\n" + diagnostics
     if process.returncode or "[Tcloud Error]" in output or "[Tcloud Error]" in diagnostics:
         # CLI diagnostics can include filenames and account metadata.
         reason = (output + "\n" + diagnostics)[-1800:].strip()
@@ -38,6 +41,29 @@ def _sdk_once(arguments, cwd=None, timeout=180):
     if arguments[0] == "submit":
         return output + "\n" + diagnostics
     return output
+
+
+class TaccSDKError(RuntimeError):
+    """Public-safe failure context; raw CLI diagnostics stay out of UI."""
+    def __init__(self, command, exc):
+        text = str(exc).lower()
+        self.code = "command_failed"
+        if "invalid job id" in text:
+            self.code, cause = "job_missing", "作业已结束或不存在"
+        elif "no such file" in text:
+            self.code, cause = "file_missing", "远端文件尚不存在"
+        elif isinstance(exc, subprocess.TimeoutExpired):
+            self.code, cause = "timeout", "连接超时"
+        elif any(x in text for x in ("handshake", "failed to dial", "remote session", "connection reset")):
+            self.code, cause = "connection", "SSH 连接失败"
+        elif "no such file" in text:
+            cause = "远端文件尚不存在"
+        else:
+            cause = "命令执行失败"
+        phase = "提交作业" if command == "submit" else "读取作业状态或结果"
+        hint = "；提交结果可能不确定，请先核对作业记录，避免重复提交" if command == "submit" else "；请恢复原任务，避免重复创建作业"
+        self.public_message = f"TACC SDK {phase}时{cause}{hint}。"
+        super().__init__(self.public_message)
 
 
 def sdk(arguments, cwd=None, timeout=180):
@@ -52,7 +78,7 @@ def sdk(arguments, cwd=None, timeout=180):
                     "handshake failed", "failed to dial", "failed to create remote session",
                     "connection reset", "connection timed out", "unexpected eof"))
             if not transient or attempt + 1 == attempts:
-                raise
+                raise TaccSDKError(arguments[0], exc) from exc
             time.sleep(2 * (attempt + 1))
 
 
@@ -110,7 +136,7 @@ def wait_for_result(run, remote_id, event):
         try:
             log = sdk(["cat", log_path], timeout=60)
         except RuntimeError as exc:
-            if "No such file" not in str(exc):
+            if getattr(exc, "code", None) != "file_missing" and "No such file" not in str(exc):
                 raise
             log = ""
         lines = [line.removeprefix("CLAUSE_PROGRESS ") for line in log.splitlines() if line.startswith("CLAUSE_PROGRESS ")]
@@ -138,6 +164,8 @@ def run_remote(operation, event, checkpoint=None, **arguments):
     saved = checkpoint("tacc_client") if checkpoint else None
     run = saved["run"] if saved else uuid.uuid4().hex
     if saved:
+        if not saved.get("job_id"):
+            raise RuntimeError("上次提交结果不确定，已阻止重复提交；请核对该任务的远端作业后恢复。")
         remote_id = saved["job_id"]
         event("queue", "恢复 TACC 客户端任务", remote_id)
     else:
@@ -161,6 +189,10 @@ def run_remote(operation, event, checkpoint=None, **arguments):
                                           "model_config": model_config, **arguments},
                                           ensure_ascii=True), encoding="utf-8")
             event("queue", "提交 TACC 客户端任务", "")
+            intent = {"run": run, "operation": operation, "state": "submitting"}
+            (staging / "receipt.json").write_text(json.dumps(intent), encoding="utf-8")
+            if checkpoint:
+                checkpoint("tacc_client", intent)
             remote_id = submit(staging)
             # A private receipt survives diagnostic-script exits as well as worker restarts.
             receipt = {"run": run, "job_id": remote_id, "operation": operation}

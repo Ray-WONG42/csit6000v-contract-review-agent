@@ -15,7 +15,7 @@ def test_client_submission_only_copies_needed_files(monkeypatch, tmp_path):
             checkpoints[key] = value
         return checkpoints.get(key)
     def fake_submit(staging):
-        assert {p.name for p in staging.iterdir()} == {"job.sh", "tuxiv.conf", "remote.py", "resolve_endpoint.py", "engine.py", "request.json", "prompt_loader.py", "prompts"}
+        assert {p.name for p in staging.iterdir()} == {"job.sh", "tuxiv.conf", "remote.py", "resolve_endpoint.py", "engine.py", "request.json", "prompt_loader.py", "prompts", "receipt.json"}
 
         assert (staging / 'resolve_endpoint.py').is_file()
         request = json.loads((staging / "request.json").read_text())
@@ -56,6 +56,34 @@ def test_read_timeout_retries_but_submission_does_not(monkeypatch):
     assert tacc_sdk.sdk(["cat", "log"]) == "ready"
     assert len(calls) == 2
     calls.clear()
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(tacc_sdk.TaccSDKError, match="提交作业") :
         tacc_sdk.sdk(["submit"])
     assert calls == ["submit"]
+
+
+def test_missing_job_retains_machine_readable_reason(monkeypatch):
+    def fail(*a): raise RuntimeError("TACC SDK failed: Invalid job id specified")
+    monkeypatch.setattr(tacc_sdk, "_sdk_once", fail)
+    with pytest.raises(tacc_sdk.TaccSDKError) as info:
+        tacc_sdk.sdk(["ps", "-j", "1"])
+    assert info.value.code == "job_missing"
+
+
+def test_ambiguous_submission_checkpoint_blocks_duplicate(monkeypatch, tmp_path):
+    monkeypatch.setattr(tacc_sdk.settings, "app_data", str(tmp_path))
+    monkeypatch.setattr(tacc_sdk.settings, "tacc_url", "http://10-0-1-14:8000/v1")
+    memory = {}
+    def checkpoint(k, v=None):
+        if v is not None: memory[k] = v
+        return memory.get(k)
+    calls = []
+    def submit(*a):
+        calls.append(1)
+        raise RuntimeError("lost submit response")
+    monkeypatch.setattr(tacc_sdk, "submit", submit)
+    with pytest.raises(RuntimeError):
+        tacc_sdk.run_remote("review", lambda *_: None, checkpoint, paragraphs=[])
+    with pytest.raises(RuntimeError, match="阻止重复提交"):
+        tacc_sdk.run_remote("review", lambda *_: None, checkpoint, paragraphs=[])
+    assert len(calls) == 1
+    assert not list(tmp_path.rglob("request.json"))

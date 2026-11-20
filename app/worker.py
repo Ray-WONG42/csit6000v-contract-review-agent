@@ -117,7 +117,9 @@ def run_job(job_id, claim):
             job = db.get(Job, job_id)
             if job and job.claim == claim:
                 job.state = "failed"
-                if isinstance(exc, (ValueError, RuntimeError, TimeoutError)) and not str(exc).startswith("TACC SDK failed:"):
+                if getattr(exc, "public_message", None):
+                    job.error = exc.public_message
+                elif isinstance(exc, (ValueError, RuntimeError, TimeoutError)) and not str(exc).startswith("TACC SDK failed:"):
                     job.error = str(exc)[:250]
                 else:
                     job.error = f"{type(exc).__name__}：处理失败，请检查服务配置后重新提交"

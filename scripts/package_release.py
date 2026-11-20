@@ -9,7 +9,8 @@ FILES = {'README.md', 'LICENSE', 'AGENTS.md', '.gitignore', '.gitattributes', '.
          'requirements.txt', 'requirements-lock.txt', 'demo.py', 'run_agent.sh', 'prompt_loader.py',
          'engine.py', 'mailbox.py', 'alembic.ini', 'pytest.ini', 'compose.yaml', 'Dockerfile',
          'Setup.cmd', 'Start.cmd', 'Start-TACC.cmd', 'Stop-TACC.cmd', 'setup.ps1', 'start.ps1'}
-SKIP = {'node_modules', '__pycache__', '.pytest_cache', 'configurations', 'test-results', 'playwright-report'}
+SKIP = {'node_modules', '__pycache__', '.pytest_cache', 'configurations', 'test-results', 'playwright-report',
+        'data', 'uploads', 'outputs', 'logs', 'traces', 'memory', 'sessions', 'models', 'weights', '.cache', 'secrets'}
 PRIVATE_DOCS = {'progress.md', 'workbench.jpg', 'assistant.jpg'}
 TEXT = {'.py', '.txt', '.md', '.json', '.yaml', '.yml', '.toml', '.conf', '.sh', '.ps1', '.cmd', '.ts', '.tsx', '.js', '.css', '.html', '.ini'}
 
@@ -24,7 +25,9 @@ def allowed(path):
         return False
     if path.name.startswith('.env') and path.name != '.env.example':
         return False
-    if path.suffix.lower() in {'.db', '.sqlite', '.sqlite3', '.pem', '.key', '.log', '.pyc', '.gguf', '.safetensors', '.bin', '.bak'}:
+    if path.name.startswith(('id_rsa', 'id_ed25519')):
+        return False
+    if path.suffix.lower() in {'.db', '.sqlite', '.sqlite3', '.pem', '.key', '.log', '.pyc', '.gguf', '.safetensors', '.bin', '.bak', '.zip', '.tar', '.gz'}:
         return False
     if rel.parts[0] == 'tacc' and path.name in {'run.sh', 'request.json'}:
         return False

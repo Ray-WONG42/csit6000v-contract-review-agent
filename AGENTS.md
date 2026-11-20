@@ -17,4 +17,4 @@ Commands from repository root:
 - npm --prefix web run build
 - npm --prefix web run types (API must be running)
 
-Read README.md for configuration and docs/progress.md for verification evidence and unresolved external dependencies. Update the progress record when a milestone materially changes.
+Read README.md for configuration and docs/REPRODUCTION_REPORT.md for public verification evidence and unresolved external dependencies. Keep private local progress records out of published packages.

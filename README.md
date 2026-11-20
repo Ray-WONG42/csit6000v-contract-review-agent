@@ -302,6 +302,10 @@ Run regression tests with `python -m pytest -q`. Linux-only cleanup integration 
 what was actually run and external checks still pending. Real mailbox, cloud deployment and model-quality
 evaluation require their own inputs and must not be inferred from offline tests.
 
+For an isolated API/worker/packaged-frontend smoke check without Node or a browser, run
+`python scripts/smoke_web.py`. It starts services on port 8790, logs in, executes the actual
+`create_document` tool and verifies the downloaded DOCX text, then stops those services and removes temporary data.
+
 ## License
 
 No open-source license has been granted yet; see [LICENSE](LICENSE). The team must agree on licensing

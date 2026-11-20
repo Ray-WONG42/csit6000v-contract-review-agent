@@ -169,6 +169,9 @@ class Model:
         from app.config import settings
         import hashlib
         source = f"survey-v2|{self.mode}|{settings.tacc_model}|{settings.tacc_url}|{settings.tacc_context_limit}"
+        source += '|' + load_prompt('survey') + '|' + load_prompt('contract_system')
+        source += '|' + str(getattr(settings, 'llm_base_url', '')) + '|' + str(getattr(settings, 'model_name', ''))
+        source += '|' + str(getattr(settings, 'llm_temperature', 0)) + '|' + str(settings.tacc_max_output_tokens)
         return hashlib.sha256(source.encode()).hexdigest()
 
     def call(self, system, payload, phase):

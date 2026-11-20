@@ -57,7 +57,11 @@ def main():
     finally:
         for process in processes:
             if process.poll() is None:
-                process.terminate()
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    process.terminate()
         for process in processes:
             try:
                 process.wait(timeout=8)

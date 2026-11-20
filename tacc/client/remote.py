@@ -31,7 +31,7 @@ def main():
     module.settings = SimpleNamespace(
         tacc_url=request["base_url"] + "/chat/completions",
         tacc_model="qwen3.8-27b",
-        tacc_timeout=75,
+        tacc_timeout=min(180, max(30, int(config.get("timeout", 120)))),
         tacc_json_mode=False,
         tacc_context_limit=min(16384, max(4096, int(config.get("context_limit", 16384)))),
         tacc_max_output_tokens=min(4096, max(128, int(config.get("max_tokens", 1800)))),

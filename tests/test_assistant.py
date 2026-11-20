@@ -103,3 +103,24 @@ def test_web_switch_disables_tools(client, monkeypatch):
 def test_ssrf_rejection(url):
     with pytest.raises(ValueError):
         fetch_public(url)
+
+
+def test_model_named_checks_preserve_custom_questions():
+    args = assistant.SaveSkillArgs.model_validate({"skill": {
+        "name": "付款", "categories": [], "checks": {"付款期限": ["收到发票后45日内付款"]}}})
+    assert args.skill.checks == {}
+    assert args.skill.custom_items[0].question == "收到发票后45日内付款"
+
+
+def test_repeated_invalid_tool_stops_after_two_attempts(client, monkeypatch):
+    user, request, checkpoint = runner(client, "请创建Skill")
+    monkeypatch.setattr(settings, "model_mode", "tacc")
+    decisions = []
+    def decide(*_):
+        decisions.append(1)
+        return {"action": "tool", "tool": "save_skill", "arguments": {"skill": {
+            "name": "invalid", "categories": ["unknown"]}}}
+    result = run_assistant(user["id"], request, "retry-cap", lambda *_: None, checkpoint, decide)
+    assert len(decisions) == 2
+    assert "连续两次" in result["answer"]
+    assert result["artifacts"] == []

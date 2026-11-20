@@ -436,15 +436,49 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             except ValueError as exc:
                 results.append(unresolved(key, str(exc)))
     else:
-        cached = checkpoint("survey") if checkpoint and method == "retrieval" else None
+        # Batch normal built-in categories into one extraction request. BM25
+        # still limits context; quotation validation remains per-category.
+        # A failed/missing row falls through to the existing isolated retry path.
+        batched_tacc = model.mode == "tacc" and method == "retrieval"
+        cached = checkpoint("survey") if checkpoint and method == "retrieval" and not batched_tacc else None
         if cached and cached.get("signature") == model.signature and not any(k.startswith("custom_") for k in categories) and all(key in cached["hints"] for key in categories):
             hints, survey_partial = cached["hints"], cached["partial"]
             event("cache", "复用已完成的合同通读", "")
+        elif batched_tacc:
+            # BM25 and the bounded candidate union replace one model survey call
+            # per semantic chunk. The extraction batch still sees up to four
+            # evidence candidates per requested built-in category.
+            hints, survey_partial = {}, False
+            event("retrieve", "使用本地 BM25 构建批量候选", "")
         else:
             hints, survey_partial = survey_document(paragraphs, model, categories, definitions) if method == "retrieval" else ({}, False)
             if checkpoint and method == "retrieval":
                 checkpoint("survey", {"hints": hints, "partial": survey_partial, "signature": model.signature})
         by_id = {p["id"]: i for i, p in enumerate(paragraphs)}
+        batch_rows = {}
+        batch_indexes = {}
+        batch_categories = [key for key in categories
+                            if not key.startswith("custom_")
+                            and not (checkpoint and checkpoint("category:" + key))]
+        if batch_categories and model.mode == "tacc":
+            for key in batch_categories:
+                ranked = retrieval.search(key, 3, definitions[key])
+                if not ranked:
+                    ranked = list(range(min(2, len(paragraphs))))
+                suggested = [by_id[x] for x in hints.get(key, []) if x in by_id]
+                batch_indexes[key] = list(dict.fromkeys(ranked + suggested))[:4]
+            # Bound output size so a batch fits the model timeout and token budget.
+            for offset in range(0, len(batch_categories), 3):
+                group = batch_categories[offset:offset + 3]
+                union = sorted({index for key in group for index in batch_indexes[key]})
+                batch_candidates = [paragraphs[index] for index in union]
+                if batch_candidates:
+                    try:
+                        batch_rows.update(model_rows(model, group, skill, instruction,
+                                                     batch_candidates, "batch_extract", evaluation,
+                                                     definitions=definitions))
+                    except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+                        event("retry", "该批次提取失败，仅补查受影响类别", type(exc).__name__)
         for key in categories:
             label = definitions[key][0]
             if key.startswith("custom_") and model.mode == "demo":
@@ -456,6 +490,23 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
                 results.append(cached_result)
                 event("cache", label + " · 恢复已完成结果", "")
                 continue
+            if key in batch_categories and key in batch_rows:
+                candidate_ids = {paragraphs[i]["id"] for i in batch_indexes[key]}
+                evidence_ids = {item.get("paragraph_id") for item in batch_rows[key].get("evidence", [])
+                                if isinstance(item, dict)}
+                # Validate against the category's own BM25 candidates only.
+                # If evidence points outside that set, use the bounded retry below.
+                if evidence_ids.issubset(candidate_ids):
+                    try:
+                        result = validate(key, batch_rows[key],
+                                          [paragraphs[i] for i in batch_indexes[key]], definitions)
+                        results.append(result)
+                        event("validate", label + " · 批量证据校验完成", result["status"])
+                        if checkpoint:
+                            checkpoint("category:" + key, result)
+                        continue
+                    except (ValueError, KeyError, TypeError):
+                        pass
             indexes = retrieval.search(key, 4 if model.mode != "demo" else 1, definitions[key])
             # Read a small fallback sample for terminology not present in the keyword index.
             if not indexes:

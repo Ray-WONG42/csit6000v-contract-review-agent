@@ -56,17 +56,19 @@ def main():
                 if job_id in state:
                     return poll_ready(job_id, time.monotonic() + args.wait)
         if args.exclude_node:
-            if not re.fullmatch(r"[A-Za-z0-9.-]{1,64}", args.exclude_node):
+            if not re.fullmatch(r"[A-Za-z0-9.-]{1,64}(?:,[A-Za-z0-9.-]{1,64})*", args.exclude_node):
                 raise ValueError("Invalid TACC node name.")
             settings.data.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix="clause-serve-", dir=settings.data) as directory:
-                staging = Path(directory)
-                source = ROOT / "tacc" / "serve"
-                for name in ("job.sh", "service_supervisor.py"):
-                    shutil.copyfile(source / name, staging / name)
-                config = (source / "tuxiv.conf").read_text(encoding="utf-8")
-                (staging / "tuxiv.conf").write_text(config.rstrip() + "\n    - exclude=" + args.exclude_node + "\n", encoding="utf-8")
-                job_id = submit(staging)
+            # Keep the submission folder: WSL may retain handles after tcloud exits.
+            # Never let cleanup hide the returned job ID or trigger another submission.
+            staging = Path(tempfile.mkdtemp(prefix="clause-serve-", dir=settings.data))
+            source = ROOT / "tacc" / "serve"
+            for name in ("job.sh", "service_supervisor.py"):
+                shutil.copyfile(source / name, staging / name)
+            config = (source / "tuxiv.conf").read_text(encoding="utf-8")
+            (staging / "tuxiv.conf").write_text(config.rstrip() + "\n    - exclude=" + args.exclude_node + "\n", encoding="utf-8")
+            job_id = submit(staging)
+            save_service({"job_id": job_id, "ready": False})
         else:
             job_id = submit(ROOT / "tacc" / "serve")
         print("Submitted TACC Qwen service:", job_id, flush=True)

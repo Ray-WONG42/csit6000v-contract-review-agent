@@ -38,11 +38,14 @@ class CustomItem(BaseModel):
         return value
 
 
+CategoryId = Literal["termination", "liability_cap", "governing_law", "automatic_renewal", "audit_rights", "assignment", "insurance", "liquidated_damages"]
+
+
 class SkillInput(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    categories: list[str] = Field(max_length=8)
+    categories: list[CategoryId] = Field(max_length=8)
     focus: str = Field(default="", max_length=1500)
-    checks: dict[str, list[str]] = Field(default_factory=dict)
+    checks: dict[CategoryId, list[str]] = Field(default_factory=dict)
     custom_items: list[CustomItem] = Field(default_factory=list, max_length=6)
     policy: Literal["supplier-demo@1", "evidence-only@1"] = "supplier-demo@1"
 

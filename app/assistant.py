@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from sqlalchemy import select
 from fastapi import HTTPException
 
@@ -13,7 +13,7 @@ from .security import own
 from .schemas import SkillInput, JobInput
 from .services import create_job, write_file
 from .web_tools import web_search, read_webpage
-from engine import Model, parse, docx_report
+from engine import Model, parse, docx_report, RULES
 from prompt_loader import load_prompt
 
 
@@ -44,6 +44,29 @@ class ReviewArgs(ContractArgs):
 
 class SaveSkillArgs(StrictArgs):
     skill: SkillInput
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_named_checks(cls, value):
+        # Preserve custom questions emitted by models using descriptive check keys.
+        if not isinstance(value, dict) or not isinstance(value.get("skill"), dict):
+            return value
+        body = dict(value["skill"])
+        checks = body.get("checks", {})
+        if not isinstance(checks, dict):
+            return value
+        aliases = {rule[0]: key for key, rule in RULES.items()}
+        normalized, custom = {}, list(body.get("custom_items", []))
+        for key, items in checks.items():
+            canonical = aliases.get(key, key)
+            if canonical in RULES:
+                normalized[canonical] = items
+            elif isinstance(items, list) and items and all(isinstance(x, str) for x in items):
+                custom.append({"title": key, "question": "；".join(items)})
+            else:
+                normalized[key] = items
+        body["checks"], body["custom_items"] = normalized, custom
+        return {**value, "skill": body}
 
 
 class DocumentArgs(StrictArgs):
@@ -239,8 +262,13 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
         except (ValueError, OSError, TimeoutError) as exc:
             result = {"error": str(exc)[:250] if isinstance(exc, ValueError) else type(exc).__name__}
             event("tool_error", str(name) + " 未完成", result["error"])
+        prior_errors = sum(item["tool"] == name and bool(item["result"].get("error"))
+                           for item in observations if isinstance(item["result"], dict))
         observations.append({"tool": name, "arguments": arguments, "result": result})
         checkpoint("observations", observations)
+        if result.get("error") and prior_errors >= 1:
+            return {"answer": f"工具 {name} 连续两次执行失败，已停止重试。原因：{result['error']}。本次操作尚未完成。",
+                    "sources": sources, "artifacts": artifacts, "reviews": reviews, "mode": settings.model_mode}
         collect_sources(result, sources)
         if name in ("create_document", "save_skill") and not result.get("error"):
             artifacts.append(result)

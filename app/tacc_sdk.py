@@ -15,7 +15,7 @@ JOB_ID = re.compile(r"Submitted batch job (\d+)")
 SERVICE_URL = re.compile(r"^SERVICE_BASE_URL=(http://[A-Za-z0-9.-]+:[0-9]{1,5}/v1)[ \r]*$", re.M)
 
 
-def sdk(arguments, cwd=None, timeout=180):
+def _sdk_once(arguments, cwd=None, timeout=180):
     if os.name == "nt":
         if cwd:
             drive = cwd.drive.rstrip(":").lower()
@@ -38,6 +38,22 @@ def sdk(arguments, cwd=None, timeout=180):
     if arguments[0] == "submit":
         return output + "\n" + diagnostics
     return output
+
+
+def sdk(arguments, cwd=None, timeout=180):
+    # Only idempotent reads can be retried after an ambiguous connection failure.
+    attempts = 3 if arguments[0] in {"cat", "ps"} else 1
+    for attempt in range(attempts):
+        try:
+            return _sdk_once(arguments, cwd, timeout)
+        except (subprocess.TimeoutExpired, RuntimeError) as exc:
+            transient = isinstance(exc, subprocess.TimeoutExpired) or any(
+                text in str(exc).lower() for text in (
+                    "handshake failed", "failed to dial", "failed to create remote session",
+                    "connection reset", "connection timed out", "unexpected eof"))
+            if not transient or attempt + 1 == attempts:
+                raise
+            time.sleep(2 * (attempt + 1))
 
 
 def service_file():
@@ -88,6 +104,7 @@ def submit(cwd):
 def wait_for_result(run, remote_id, event):
     deadline = time.monotonic() + settings.tacc_sdk_timeout
     seen = 0
+    poll_delay = 2
     log_path = f"slurm_log/clause-qwen-client-{remote_id}.log"
     while time.monotonic() < deadline:
         try:
@@ -108,7 +125,12 @@ def wait_for_result(run, remote_id, event):
             return envelope
         if "Traceback (most recent call last)" in log or "Exited with exit code" in log or "CANCELLED" in log:
             raise RuntimeError("TACC 客户端执行失败，请查看作业日志 " + remote_id)
-        time.sleep(6)
+        # tcloud invokes a WSL subprocess for each read on Windows. Start with
+        # responsive updates, then back off while model inference is running.
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(poll_delay, remaining))
+        poll_delay = min(12, poll_delay + 2)
     raise TimeoutError("TACC 客户端等待超时，作业编号 " + remote_id)
 
 
@@ -132,7 +154,7 @@ def run_remote(operation, event, checkpoint=None, **arguments):
             shutil.copyfile(ROOT / "engine.py", staging / "engine.py")
             shutil.copyfile(ROOT / "prompt_loader.py", staging / "prompt_loader.py")
             shutil.copytree(ROOT / "prompts", staging / "prompts")
-            model_config = {"temperature": settings.llm_temperature,
+            model_config = {"temperature": settings.llm_temperature, "timeout": settings.tacc_timeout,
                             "max_tokens": settings.tacc_max_output_tokens,
                             "context_limit": settings.tacc_context_limit}
             request.write_text(json.dumps({"operation": operation, "run": run, "base_url": base,
@@ -140,6 +162,9 @@ def run_remote(operation, event, checkpoint=None, **arguments):
                                           ensure_ascii=True), encoding="utf-8")
             event("queue", "提交 TACC 客户端任务", "")
             remote_id = submit(staging)
+            # A private receipt survives diagnostic-script exits as well as worker restarts.
+            receipt = {"run": run, "job_id": remote_id, "operation": operation}
+            (staging / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             if checkpoint:
                 checkpoint("tacc_client", {"run": run, "job_id": remote_id})
             event("queue", "TACC 客户端已提交", remote_id)

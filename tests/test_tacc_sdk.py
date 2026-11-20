@@ -41,3 +41,21 @@ def test_wait_for_results_reads_structured_file(monkeypatch):
     monkeypatch.setattr(tacc_sdk, "sdk", fake_sdk)
     assert tacc_sdk.wait_for_result(run, "100", lambda *args: sent.append(args))["result"]["ok"]
     assert sent == [("model", "Call Qwen", "")]
+
+
+def test_read_timeout_retries_but_submission_does_not(monkeypatch):
+    import subprocess
+    calls = []
+    monkeypatch.setattr(tacc_sdk.time, "sleep", lambda *_: None)
+    def flaky(args, *unused):
+        calls.append(args[0])
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired("wsl", 60)
+        return "ready"
+    monkeypatch.setattr(tacc_sdk, "_sdk_once", flaky)
+    assert tacc_sdk.sdk(["cat", "log"]) == "ready"
+    assert len(calls) == 2
+    calls.clear()
+    with pytest.raises(subprocess.TimeoutExpired):
+        tacc_sdk.sdk(["submit"])
+    assert calls == ["submit"]

@@ -16,18 +16,42 @@ printf 'SLURM CUDA_VISIBLE_DEVICES=%s\n' "${CUDA_VISIBLE_DEVICES:-unset}"
 nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader
 if [[ "${CUDA_VISIBLE_DEVICES:-}" =~ ^[0-9]+,[0-9]+$ ]]; then
     while IFS= read -r available; do
+        available="${available//[[:space:]]/}"
+        if [[ ! "$available" =~ ^[0-9]+$ ]]; then
+            echo "CLAUSE_STARTUP_FAILURE: GPU memory query did not return a number"
+            exit 24
+        fi
         if (( available < 14000 )); then
             echo 'CLAUSE_STARTUP_FAILURE: insufficient free memory on an allocated GPU'
             exit 23
         fi
-    done < <(nvidia-smi -i "$CUDA_VISIBLE_DEVICES" --query-gpu=memory.free --format=csv,noheader,nounits)
+    done < <(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits)
 fi
 printf 'SERVICE_BASE_URL=http://%s:%s/v1\n' "$(hostname)" "$port"
 cat > "$QWEN_RUN_DIR/clause-serve.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
 set -euo pipefail
+cat > "$QWEN_RUN_DIR/clause-gpu-entry.py" <<'PYENTRY'
+import os
+import runpy
+import sys
+import pynvml
+pynvml.nvmlInit()
+count = pynvml.nvmlDeviceGetCount()
+assigned = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
+# Remap only when the isolated runtime exposes exactly the two granted GPUs.
+if len(assigned) == 2 and all(x.isdigit() for x in assigned):
+    if any(int(x) >= count for x in assigned):
+        if count != 2:
+            raise RuntimeError("GPU allocation cannot be safely mapped to runtime devices")
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+        print("CLAUSE_GPU_MAPPING: isolated two-GPU runtime mapped to 0,1", flush=True)
+pynvml.nvmlShutdown()
+sys.argv = ["vllm", *sys.argv[1:]]
+os.execv(sys.executable, [sys.executable, "-m", "vllm.entrypoints.openai.api_server", *sys.argv[1:]])
+PYENTRY
 exec bash "$QWEN_PROJECT_ROOT/runtime.sh" "$QWEN_PROJECT_ROOT/vllm-env/bin/python" \
-    -m vllm.entrypoints.openai.api_server \
+    "$QWEN_RUN_DIR/clause-gpu-entry.py" \
     --model "$QWEN_MODEL_PATH" --served-model-name qwen3.8-27b \
     --safetensors-load-strategy lazy --host 0.0.0.0 --port "$CLAUSE_SERVICE_PORT" \
     --tensor-parallel-size 2 --language-model-only --dtype bfloat16 \

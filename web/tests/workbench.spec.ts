@@ -1,0 +1,32 @@
+import { test, expect } from "@playwright/test";
+import path from "node:path";
+
+test("upload, review, source evidence, report, follow-up and local persistence", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "法务", exact: true }).click();
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByLabel("退出登录")).toBeVisible();
+  await page.getByLabel("上传合同", { exact: true }).setInputFiles(path.resolve("../fixtures/Acme-Service-Agreement.docx"));
+  await expect(page.getByLabel("审查要求")).toBeVisible();
+  await page.getByLabel("审查要求").fill("进行标准合同审查");
+  await page.getByLabel("开始审查").click();
+  await expect(page.getByText("已完成 8 类条款检查，引用与清单判断见右侧。")).toBeVisible();
+  const renewalEvidence = page.locator(".quote").filter({ hasText: "60 calendar days" });
+  await renewalEvidence.click();
+  await expect(page.locator("mark")).toContainText("60 calendar days");
+  const download = page.waitForEvent("download");
+  await page.getByRole("link", { name: /合同审查报告 Word/ }).click();
+  expect((await download).suggestedFilename()).toContain(".docx");
+  await page.getByLabel("审查要求").fill("自动续约需要提前多久通知？");
+  await page.getByLabel("开始审查").click();
+  await expect(page.getByText("已完成 1 类条款检查，引用与清单判断见右侧。")).toBeVisible();
+  await page.getByLabel("审查要求").fill("本地草稿测试");
+  await page.reload();
+  await page.locator(".contract").first().click();
+  await expect(page.getByLabel("审查要求")).toHaveValue("本地草稿测试");
+  await page.getByRole("button", { name: "编辑报告", exact: true }).click();
+  await page.getByLabel("报告内容").fill("# 人工复核报告\n已核验通知期限");
+  const draft = page.waitForEvent("download");
+  await page.getByRole("button", { name: "保存并下载编辑稿" }).click();
+  expect((await draft).suggestedFilename()).toContain("编辑稿");
+});

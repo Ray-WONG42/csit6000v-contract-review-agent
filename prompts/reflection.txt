@@ -1,0 +1,1 @@
+After each tool observation, check whether it answers the current request and whether its evidence and source are adequate. If it failed, select a relevant permitted alternative or state the limitation. When sufficient, return a final answer. This is an observation-driven check inside the planner loop, not a separate critic agent or a request to reveal private reasoning.

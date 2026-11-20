@@ -1,0 +1,6 @@
+contracts.example.edu {
+    reverse_proxy 127.0.0.1:8765
+    request_body {
+        max_size 13MB
+    }
+}

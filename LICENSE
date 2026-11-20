@@ -1,0 +1,11 @@
+No open-source license has been granted for this project.
+All rights reserved by the respective contributors.
+
+Repository visibility does not grant permission to redistribute, relicense,
+or use this work beyond rights granted by applicable law or GitHub's terms.
+Contact the repository maintainers for permission. The project team should
+agree on a license before replacing this notice with an open-source license.
+
+Third-party dependencies retain their respective licenses. The TACC runtime
+supervisor is adapted from the course-provided CineContext cleanup update;
+confirm the teaching team's redistribution terms before public publication.

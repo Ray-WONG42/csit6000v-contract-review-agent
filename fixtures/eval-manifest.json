@@ -1,0 +1,24 @@
+{
+  "synthetic": true,
+  "contracts": [
+    {
+      "id": "positive-cross-paragraph",
+      "file": "Acme-Service-Agreement.txt",
+      "gold": {
+        "termination": ["Either party may terminate this Agreement for convenience by giving 90 calendar days written notice."],
+        "liability_cap": ["The aggregate liability of the Supplier shall not exceed USD 100,000 in any contract year."],
+        "governing_law": ["This Agreement shall be governed by the laws of Hong Kong."],
+        "automatic_renewal": ["This Agreement will automatically renew for successive one-year terms."],
+        "audit_rights": ["The Customer has the right to audit the Supplier's service records on ten business days written notice."],
+        "assignment": ["Neither party may assign this Agreement without the prior written consent of the other party."],
+        "insurance": ["The Supplier shall maintain commercial liability insurance with a limit of USD 1,000,000."],
+        "liquidated_damages": ["The Supplier shall pay liquidated damages of USD 500 per day of delay, capped at USD 10,000."]
+      }
+    },
+    {
+      "id": "negative-work-order",
+      "file": "Negative-Contract.txt",
+      "gold": {"termination": [], "liability_cap": [], "governing_law": [], "automatic_renewal": [], "audit_rights": [], "assignment": [], "insurance": [], "liquidated_damages": []}
+    }
+  ]
+}

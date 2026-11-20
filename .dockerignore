@@ -1,0 +1,10 @@
+.venv
+web/node_modules
+data
+.env
+.git
+tests
+web/test-results
+docs/workbench.jpg
+**/__pycache__
+.pytest_cache

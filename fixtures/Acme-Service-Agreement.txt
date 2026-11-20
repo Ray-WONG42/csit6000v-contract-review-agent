@@ -1,0 +1,35 @@
+ACME SERVICE AGREEMENT
+
+This synthetic agreement is between Acme Limited (Customer) and Harbor Services Limited (Supplier).
+
+1. Services
+The Supplier will provide monthly maintenance services and retain the service records for six years.
+
+2. Termination
+Either party may terminate this Agreement for convenience by giving 90 calendar days written notice.
+
+3. Liability
+The aggregate liability of the Supplier shall not exceed USD 100,000 in any contract year.
+
+4. Governing Law
+This Agreement shall be governed by the laws of Hong Kong.
+
+5. Renewal
+This Agreement will automatically renew for successive one-year terms.
+
+Either party may prevent the extension by giving at least 60 calendar days written notice before the current term expires.
+
+6. Audit
+The Customer has the right to audit the Supplier's service records on ten business days written notice.
+
+7. Assignment
+Neither party may assign this Agreement without the prior written consent of the other party.
+
+8. Insurance
+The Supplier shall maintain commercial liability insurance with a limit of USD 1,000,000.
+
+9. Delay
+The Supplier shall pay liquidated damages of USD 500 per day of delay, capped at USD 10,000.
+
+10. Entire Agreement
+This Agreement constitutes the entire agreement between the parties.

@@ -10,7 +10,7 @@ separate local release checkout; the original proposal and CUAD Git LFS attribut
 were preserved. No remote push was performed.
 
 A new clone of the prepared **local** release repository was created using
-`git clone --no-local`, then fast-forwarded to implementation commit `fde924a`.
+`git clone --no-local`, then fast-forwarded to implementation commit `0665fdc`.
 This verifies the proposed publication content, not the unchanged public GitHub HEAD.
 The final documentation/package metadata may be in a subsequent local commit.
 

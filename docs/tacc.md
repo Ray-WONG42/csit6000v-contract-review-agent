@@ -13,6 +13,6 @@
 
 运行 `python scripts/check_connections.py --live` 会排队提交一条合成探测。日常查看状态可运行 `python scripts/tacc_service.py status`。服务编号与地址保存在运行数据目录的 `tacc-service.json`。作业恢复会复用已记录的客户端编号。
 
-账号首次使用时需要按课程 `STUDENT-COMMANDS.md` 配置官方 SDK 和公共环境。此电脑已配置。另一台电脑需要拥有可访问该 TACC 账号的 SDK 环境，TACC 的内网 HTTP 地址仅供集群内客户端使用。
+账号首次使用时需要按课程提供的 `STUDENT-COMMANDS.md` 配置官方 SDK 和公共环境，该课程文件不在本工程包内。新电脑需要使用自己的授权账号配置 SDK，TACC 的内网 HTTP 地址仅供集群内客户端使用。当前可复现配置以根目录 README.md 为准。
 
 参考：[课程使用的官方 tcloud SDK](https://github.com/turingaicloud/tcloud-sdk)。

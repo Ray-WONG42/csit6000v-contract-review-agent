@@ -15,8 +15,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true", help="Perform configured model and mailbox read requests.")
     args = parser.parse_args()
-    report = {"model_mode": settings.model_mode, "tacc_url_configured": bool(settings.tacc_url),
-              "model_id_configured": bool(settings.tacc_model), "graph_configured": Outlook().enabled,
+    report = {"model_mode": settings.model_mode, "tacc_url_configured": bool(settings.tacc_url or settings.llm_base_url),
+              "model_id_configured": bool(settings.tacc_model or settings.model_name), "graph_configured": Outlook().enabled,
               "public_url": settings.app_public_url, "secure_cookie": settings.app_secure_cookie,
               "tacc_protocol": settings.tacc_protocol}
     if settings.tacc_protocol == "sdk":
@@ -33,7 +33,7 @@ def main():
             except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
                 report["tacc_test"] = False
                 report["tacc_error"] = str(exc)[:250] if not str(exc).startswith("TACC SDK failed:") else "SDK command failed"
-        elif settings.tacc_url and settings.tacc_model:
+        elif (settings.tacc_url or settings.llm_base_url) and (settings.tacc_model or settings.model_name):
             try:
                 model = Model(lambda *_: None, "tacc")
                 result = model.call(load_prompt('probe'), {}, "connection_test")

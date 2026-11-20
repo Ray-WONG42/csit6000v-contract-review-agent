@@ -308,9 +308,10 @@ For an isolated API/worker/packaged-frontend smoke check without Node or a brows
 
 ## License
 
-No open-source license has been granted yet; see [LICENSE](LICENSE). The team must agree on licensing
-and confirm redistribution terms for course-provided cleanup code before public publication.
+Project-authored code uses the [MIT License](LICENSE), selected with the maintainer's authorization.
+Permission to publish the course cleanup update was confirmed by the maintainer. Adapted course portions
+and third-party materials retain their upstream terms; see [NOTICE](NOTICE).
 Third-party packages keep their original licenses. Refer to the [official tcloud SDK](https://github.com/turingaicloud/tcloud-sdk)
 for SDK prerequisites; no SDK account or private key is distributed here.
 
-中文：当前保留权利声明，不擅自替小组选择 MIT 等开源许可。上传公开仓库前请确认小组及课程代码的授权。
+中文：经维护者确认，自有代码采用 MIT；课程补丁允许公开，保留来源说明，不擅自将上游代码改授 MIT。

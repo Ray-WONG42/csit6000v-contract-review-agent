@@ -68,7 +68,7 @@ These items and the corresponding user actions appear in the README FAQ.
 - **Quality evaluation:** synthetic demo PASS does not measure legal correctness or CUAD accuracy.
 - **Other systems/providers:** no Linux/macOS clean installation or Anthropic/Ollama/provider
   integration result is claimed. The Linux process supervisor has its separate simulated-process check.
-- **Licensing:** team agreement and course-code redistribution terms must be confirmed before public publication.
+- **Publication authorization:** the maintainer subsequently confirmed permission to publish the course update and selected MIT for project-authored code. LICENSE and NOTICE preserve the distinction from upstream terms.
 
 中文：这份记录验证的是“待上传内容的本地干净 clone”，没有把离线规则工具演示当作
 真实模型验收。上传后仍需从 GitHub 新 clone 再跑同样命令；TACC、邮箱和云部署各自验收。

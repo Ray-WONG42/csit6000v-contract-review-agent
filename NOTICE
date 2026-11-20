@@ -1,0 +1,17 @@
+Project-authored code is licensed under the MIT License in LICENSE.
+
+Course-provided component:
+  tacc/serve/service_supervisor.py
+  cleanup integration in tacc/serve/job.sh
+
+These portions were adapted from cinecontext-qwen-e2e-fix.zip, accompanying
+the course announcement "TACC vLLM Cleanup Update for CineContext".
+The project maintainer confirmed permission to publish the course update
+on 2026-11-20. That confirmation is recorded as publication authorization,
+not as evidence that the upstream authors granted an MIT license.
+Upstream course terms continue to apply to those portions; the project MIT
+grant does not purport to relicense upstream material.
+
+Third-party libraries, the original proposal, and optional CUAD dataset
+retain their respective ownership and license terms. The MIT grant covers
+project-authored code, not those third-party materials.

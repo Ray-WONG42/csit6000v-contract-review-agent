@@ -5,7 +5,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 DIRECTORIES = {'app', 'prompts', 'scripts', 'tacc', 'tests', 'fixtures', 'evals', 'migrations', 'deploy', 'docs', 'web'}
-FILES = {'README.md', 'LICENSE', 'AGENTS.md', '.gitignore', '.gitattributes', '.dockerignore', '.env.example',
+FILES = {'README.md', 'LICENSE', 'NOTICE', 'AGENTS.md', '.gitignore', '.gitattributes', '.dockerignore', '.env.example',
          'requirements.txt', 'requirements-lock.txt', 'demo.py', 'run_agent.sh', 'prompt_loader.py',
          'engine.py', 'mailbox.py', 'alembic.ini', 'pytest.ini', 'compose.yaml', 'Dockerfile',
          'Setup.cmd', 'Start.cmd', 'Start-TACC.cmd', 'Stop-TACC.cmd', 'setup.ps1', 'start.ps1'}

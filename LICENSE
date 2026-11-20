@@ -1,11 +1,24 @@
-No open-source license has been granted for this project.
-All rights reserved by the respective contributors.
+MIT License
 
-Repository visibility does not grant permission to redistribute, relicense,
-or use this work beyond rights granted by applicable law or GitHub's terms.
-Contact the repository maintainers for permission. The project team should
-agree on a license before replacing this notice with an open-source license.
+Copyright (c) 2026 Contract Review Agent contributors
 
-Third-party dependencies retain their respective licenses. The TACC runtime
-supervisor is adapted from the course-provided CineContext cleanup update;
-confirm the teaching team's redistribution terms before public publication.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Scope: this license applies to project-authored code. Upstream course code
+and third-party materials listed in NOTICE remain under their own terms.

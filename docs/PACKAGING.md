@@ -6,7 +6,7 @@ committed. `[GENERATED]` must be initialized after cloning.
 ```text
 .
 ├── README.md                    [COMMIT] English + Chinese reproduction guide
-├── LICENSE                      [COMMIT] rights notice; team must agree on licensing
+├── LICENSE / NOTICE             [COMMIT] MIT for own code; course-source notice
 ├── .gitignore / .gitattributes   [COMMIT] privacy rules and LF shell scripts
 ├── .env.example                 [COMMIT] blank credentials and public defaults
 ├── requirements.txt             [COMMIT] exact dependency versions
@@ -53,7 +53,7 @@ possible secrets have been detected. Read `git diff --cached` before pushing.
 
 1. Supply your own TACC SDK credentials privately; never copy another user's account.
 2. Fill `.env`; keep it untracked. For real Outlook, privately complete Graph authorization.
-3. Team must decide licensing and confirm redistribution rights for course-provided code.
+3. Preserve LICENSE and NOTICE. The maintainer confirmed public distribution and selected MIT for project-authored code; retain upstream course terms for adapted portions.
 4. Rebuild the frontend after any UI or VITE configuration change: `npm --prefix web ci`, then `npm --prefix web run build`.
 5. Run `python demo.py`, `python -m pytest -q`, and the package scanner.
 6. Inspect `git status --short`, `git diff`, and `git diff --cached`; stage source/config templates/docs only.

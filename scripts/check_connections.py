@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import settings
 from mailbox import Outlook
 from engine import Model
+from prompt_loader import load_prompt
 from app.tacc_sdk import run_remote, service_record
 
 
@@ -35,7 +36,7 @@ def main():
         elif settings.tacc_url and settings.tacc_model:
             try:
                 model = Model(lambda *_: None, "tacc")
-                result = model.call('Return JSON only: {"ok":true}', {}, "connection_test")
+                result = model.call(load_prompt('probe'), {}, "connection_test")
                 report["tacc_test"] = result == {"ok": True}
             except Exception as exc:
                 report["tacc_test"] = type(exc).__name__

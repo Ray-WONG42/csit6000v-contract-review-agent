@@ -43,6 +43,7 @@ def main():
     )
     sys.modules["app.config"] = module
     from engine import Model, review
+    from prompt_loader import load_prompt
     traces = []
     def event(stage, title, detail=""):
         traces.append([stage, title, detail])
@@ -65,7 +66,7 @@ def main():
         if request["operation"] == "decision":
             result = model.call(request["system"], request["payload"], "assistant")
         elif request["operation"] == "probe":
-            value = model.call('Return exactly the JSON object {"ok":true} without any surrounding explanation.', {}, "probe")
+            value = model.call(load_prompt('probe'), {}, "probe")
             if value != {"ok": True}:
                 raise ValueError("Model did not return the requested probe JSON")
             result = {"ok": True, "model": module.settings.tacc_model, "calls": model.calls}

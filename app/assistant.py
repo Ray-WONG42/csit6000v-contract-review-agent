@@ -211,7 +211,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
                            "local_date": datetime.now(timezone(timedelta(hours=8))).date().isoformat()}
                 if step == 6:
                     payload["tools"] = {}
-                    payload["instruction"] = "Tool budget exhausted. Return a final answer with remaining limitations."
+                    payload["instruction"] = load_prompt("budget")
                 def scoped_checkpoint(key, value=None):
                     return checkpoint(f"model:{step}:" + key, value)
                 decision = decide(system, payload) if decide else model_decision(system, payload, event, scoped_checkpoint)

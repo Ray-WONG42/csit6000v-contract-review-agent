@@ -17,7 +17,7 @@ from .db import initialize, session, User, Login, Code, Contract, File, Job, Eve
 from .security import current_user, legal_user, own, password_hash, password_matches, digest, code_digest, seed_users
 from .schemas import EmailInput, RegisterInput, LoginInput, SkillInput, JobInput, CompanyInput, ReportInput, ContractView, JobView, EventView, AssistantInput
 from .services import (ACTIVE_ASSISTANT_STATES, ingest, create_job, contract_view, job_view, send_mail,
-                       write_file, resolve_model_selection, tacc_configured, delete_history)
+                       write_file, resolve_model_selection, tacc_configured, delete_history, graph_client)
 from engine import RULES, MAX_FILE, Model, docx_report
 
 
@@ -64,9 +64,12 @@ def throttle(request, action, limit=15):
 @app.get("/api/config")
 def config():
     return {"demo": settings.app_demo, "model_mode": settings.model_mode,
-            "model_name": settings.ollama_model if settings.model_mode == "ollama" else "",
+            "model_name": settings.ollama_model if settings.model_mode == "ollama" else settings.model_name if settings.model_mode == "api" else settings.tacc_model,
+            "api_model_name": settings.model_name, "api_configured": bool(settings.llm_base_url and settings.llm_api_key and settings.model_name),
             "categories": [{"id": key, "label": value[0]} for key, value in RULES.items()],
-            "mailbox": settings.graph_mailbox,
+            "mailbox": settings.mailbox,
+            "mail_auto_review": settings.mail_auto_review, "mail_poll_seconds": settings.mail_poll_seconds,
+            "mail_demo": settings.demo_mail, "mail_configured": graph_client().enabled,
             "tacc_configured": tacc_configured()}
 
 
@@ -135,12 +138,13 @@ def send_code(body: EmailInput, request: Request):
         db.add(Code(email=body.email, digest=salt + ":" + code_digest(salt + value),
                     expires=time.time() + 600, attempts=0))
     try:
-        send_mail(body.email, "注册验证码", f"验证码 {value}，10 分钟内有效。")
+        send_mail(body.email, "Verification code" if body.language == "en" else "注册验证码",
+                  f"Your verification code is {value}. It expires in 10 minutes." if body.language == "en" else f"验证码 {value}，10 分钟内有效。")
     except Exception:
         with session() as db:
             db.execute(delete(Code).where(Code.email == body.email))
-        raise HTTPException(503, "验证码邮件发送失败，请检查 Outlook 授权")
-    return {"message": "验证码已发送", "demo_code": value if settings.app_demo else None}
+        raise HTTPException(503, "验证码邮件发送失败，请检查邮箱 OAuth 授权")
+    return {"message": "验证码已发送", "demo_code": value if settings.demo_mail else None}
 
 
 @app.post("/api/auth/register")
@@ -350,11 +354,12 @@ def admin_artifacts(contract_id: str, user=Depends(current_user)):
 
 
 @app.post("/api/mail/ticket")
-def ticket(user=Depends(legal_user)):
+def ticket(request: Request, user=Depends(legal_user)):
     token = secrets.token_urlsafe(24)
     with session() as db:
         db.add(Ticket(digest=digest(token), owner_id=user.id, expires=time.time() + 86400))
-    return {"ticket": token, "subject": f"[TOKEN={token}] 合同审查", "mailbox": settings.graph_mailbox, "expires_in": 86400}
+    english = request.headers.get("accept-language", "").startswith("en")
+    return {"ticket": token, "subject": f"[TOKEN={token}] [LANG=en] Contract review" if english else f"[TOKEN={token}] 合同审查", "mailbox": settings.mailbox, "expires_in": 86400}
 
 
 @app.get("/api/mail/local")
@@ -385,3 +390,10 @@ def sample():
 dist = ROOT / "web" / "dist"
 if dist.exists():
     app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+
+
+@app.get("/api/templates/{language}/{name}")
+def builtin_template(language: str, name: str):
+    if language not in ("zh", "en") or name not in ("payment-skill.json", "review-request.txt"):
+        raise HTTPException(404, "Template not found")
+    return FileResponse(ROOT / "templates" / language / name, filename=language + "-" + name)

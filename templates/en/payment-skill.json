@@ -1,0 +1,12 @@
+{
+  "name": "Payment deadline review",
+  "categories": [],
+  "checks": {},
+  "custom_items": [
+    {
+      "title": "Payment deadline",
+      "question": "Identify the payment period, triggering event, responsible party and supporting original quotation."
+    }
+  ],
+  "policy": "evidence-only@1"
+}

@@ -123,7 +123,7 @@ def service_lock():
 def service_log(job_id):
     if not str(job_id).isdigit():
         raise ValueError("Invalid service job ID")
-    return sdk(["cat", f"slurm_log/clause-qwen-serve-{job_id}.log"], timeout=60)
+    return sdk(["cat", f"slurm_log/clause-qwen-serve-{job_id}.log"], timeout=max(30, settings.tacc_sdk_read_timeout))
 
 
 def get_base_url():
@@ -164,7 +164,7 @@ def service_job_active(job_id):
     if not str(job_id).isdigit():
         raise ValueError("Invalid service job ID")
     try:
-        status = sdk(["ps", "-j", str(job_id)], timeout=15)
+        status = sdk(["ps", "-j", str(job_id)], timeout=max(30, settings.tacc_sdk_read_timeout))
     except TaccSDKError as exc:
         if exc.code != "job_missing":
             raise
@@ -175,6 +175,17 @@ def service_job_active(job_id):
 def _submit_service(record, cwd=None):
     if record.get("state") == "submitting" and not record.get("job_id"):
         raise TaccServiceError("上次 TACC GPU 作业提交结果不确定，请核对集群作业后恢复。")
+    if cwd is None and settings.tacc_exclude_nodes:
+        nodes = settings.tacc_exclude_nodes
+        if not re.fullmatch(r"[A-Za-z0-9.-]{1,64}(?:,[A-Za-z0-9.-]{1,64})*", nodes):
+            raise ValueError("Invalid TACC exclude-node configuration")
+        staging = settings.data / "tacc-staging" / ("serve-" + uuid.uuid4().hex)
+        staging.mkdir(parents=True)
+        for name in ("job.sh", "service_supervisor.py"):
+            shutil.copyfile(ROOT / "tacc" / "serve" / name, staging / name)
+        config = (ROOT / "tacc" / "serve" / "tuxiv.conf").read_text(encoding="utf-8")
+        (staging / "tuxiv.conf").write_text(config.rstrip() + "\n    - exclude=" + nodes + "\n", encoding="utf-8")
+        cwd = staging
     save_service({"state": "submitting", "ready": False})
     try:
         job_id = submit(cwd or ROOT / "tacc" / "serve")
@@ -207,7 +218,9 @@ def inspect_service(job_id):
         log = ""
     if any(marker in log for marker in ("CLAUSE_SERVICE_EXIT", "CLAUSE_STARTUP_FAILURE", "Exited with exit code",
                                         "CANCELLED", "TIME LIMIT", "Finished server process", "Application shutdown complete")):
-        return {"ready": False, "state": "failed", "base_url": ""}
+        reason = ("TACC 分配的 GPU 可用显存不足，Qwen 未启动；请避开该节点后重新启动服务。"
+                  if "insufficient free memory" in log else "TACC Qwen 服务已退出，请核对服务日志后重新启动。")
+        return {"ready": False, "state": "failed", "base_url": "", "error": reason}
     base = SERVICE_URL.search(log)
     if base and "Application startup complete" in log:
         return {"ready": True, "state": "ready", "base_url": base[1]}
@@ -223,8 +236,8 @@ def queued_service_base(checkpoint):
         job_id = record.get("job_id")
         if expected and expected != job_id:
             raise TaccServiceError("等待中的 TACC GPU 作业已被替换，请重新提交请求。")
-        if expected and record.get("state") in {"failed", "stopped"}:
-            raise TaccServiceError("TACC GPU 作业已结束或 Qwen 启动失败，请查看集群作业日志。")
+        if record.get("state") in {"failed", "stopped"}:
+            raise TaccServiceError(record.get("error") or "TACC GPU 作业已结束或 Qwen 启动失败，请重新启动服务。")
         now = time.time()
         if not job_id or now - record.get("checked_at", 0) >= SERVICE_RECHECK_SECONDS:
             if job_id and service_job_active(job_id):
@@ -235,14 +248,14 @@ def queued_service_base(checkpoint):
                 record.update(checked_at=time.time())
                 save_service(record)
             elif expected:
-                record.update(ready=False, state="failed", checked_at=time.time())
+                record.update(inspect_service(job_id), ready=False, state="failed", checked_at=time.time())
                 save_service(record)
             else:
                 record = _submit_service(record)
         if record.get("ready"):
             return get_base_url()
         if record.get("state") in {"failed", "stopped"}:
-            raise TaccServiceError("TACC GPU 作业已结束或 Qwen 启动失败，请查看集群作业日志。")
+            raise TaccServiceError(record.get("error") or "TACC GPU 作业已结束或 Qwen 启动失败，请查看集群作业日志。")
     if checkpoint and not expected:
         checkpoint("tacc_service_job", record["job_id"])
     raise TaccServicePending(record["job_id"])

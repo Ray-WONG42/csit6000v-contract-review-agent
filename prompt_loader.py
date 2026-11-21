@@ -3,6 +3,6 @@ from pathlib import Path
 
 
 def load_prompt(name):
-    if name not in {'assistant_system', 'contract_system', 'survey', 'tool', 'reflection', 'probe', 'budget'}:
+    if name not in {'assistant_system', 'contract_system', 'survey', 'tool', 'reflection', 'probe', 'budget', 'json_retry', 'output_en', 'output_zh'}:
         raise ValueError('Unknown prompt template')
     return (Path(__file__).resolve().parent / 'prompts' / (name + '.txt')).read_text(encoding='utf-8').strip()

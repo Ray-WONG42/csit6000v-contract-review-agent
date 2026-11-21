@@ -22,7 +22,7 @@ def poll_ready(job_id, deadline):
             print(f"TACC Qwen ready. Service job {job_id}.", flush=True)
             return
         if status["state"] == "failed":
-            raise RuntimeError(f"TACC 服务 {job_id} 启动失败，请查看作业日志。")
+            raise RuntimeError(status.get("error") or f"TACC 服务 {job_id} 启动失败，请查看作业日志。")
         time.sleep(8)
     raise TimeoutError(f"TACC 服务 {job_id} 仍在排队或启动，稍后运行 status。")
 

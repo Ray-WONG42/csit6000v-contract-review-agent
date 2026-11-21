@@ -1075,12 +1075,67 @@
           }
         }
       }
+    },
+    "/api/templates/{language}/{name}": {
+      "get": {
+        "summary": "Builtin Template",
+        "operationId": "builtin_template_api_templates__language___name__get",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Language"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
       "AssistantInput": {
         "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language",
+            "default": "zh"
+          },
           "request_key": {
             "type": "string",
             "maxLength": 100,
@@ -1117,7 +1172,8 @@
             "enum": [
               "",
               "ollama",
-              "tacc"
+              "tacc",
+              "api"
             ],
             "title": "Model Mode",
             "default": ""
@@ -1275,6 +1331,15 @@
       },
       "EmailInput": {
         "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language",
+            "default": "zh"
+          },
           "email": {
             "type": "string",
             "maxLength": 254,
@@ -1378,6 +1443,15 @@
       },
       "JobInput": {
         "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language",
+            "default": "zh"
+          },
           "instruction": {
             "type": "string",
             "maxLength": 4000,
@@ -1407,7 +1481,8 @@
             "enum": [
               "",
               "ollama",
-              "tacc"
+              "tacc",
+              "api"
             ],
             "title": "Model Mode",
             "default": ""
@@ -1505,6 +1580,15 @@
       },
       "LoginInput": {
         "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language",
+            "default": "zh"
+          },
           "email": {
             "type": "string",
             "maxLength": 254,
@@ -1526,6 +1610,15 @@
       },
       "RegisterInput": {
         "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language",
+            "default": "zh"
+          },
           "email": {
             "type": "string",
             "maxLength": 254,

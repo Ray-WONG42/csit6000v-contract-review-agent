@@ -71,7 +71,9 @@ def resolve_model_selection(model_mode, ollama_model):
         raise HTTPException(422, "请选择 Ollama 模式后再指定本地模型。")
     if model_mode == "tacc" and not tacc_configured():
         raise HTTPException(503, "工作台尚未配置 TACC 连接。")
-    return {"model_mode": mode, "ollama_model": (ollama_model or settings.ollama_model) if mode == "ollama" else ""}
+    if mode == "api" and not (settings.llm_base_url and settings.model_name and settings.llm_api_key):
+        raise HTTPException(503, "API 模型尚未配置")
+    return {"model_mode": mode, "api_model": settings.model_name if mode == "api" else "", "ollama_model": (ollama_model or settings.ollama_model) if mode == "ollama" else ""}
 
 
 def create_job(db, user, contract_id, body: JobInput, source="web", state="queued", model_snapshot=None):
@@ -80,6 +82,7 @@ def create_job(db, user, contract_id, body: JobInput, source="web", state="queue
     if existing:
         saved_skill = json.loads(existing.skill)
         if (existing.contract_id != contract_id or existing.instruction != body.instruction
+                or saved_skill.get("language", "zh") != body.language
                 or saved_skill.get("requested_model_mode", "") != body.model_mode
                 or saved_skill.get("requested_ollama_model", "") != body.ollama_model):
             raise HTTPException(409, "此提交标识已用于另一个任务")
@@ -104,6 +107,7 @@ def create_job(db, user, contract_id, body: JobInput, source="web", state="queue
             previous = json.loads(parent.result)
             skill["previous_categories"] = [row["category"] for row in previous.get("rows", [])]
             skill["previous_question"] = parent.instruction[:1000]
+    skill["language"] = body.language
     skill.update(model_snapshot or resolve_model_selection(body.model_mode, body.ollama_model))
     skill["requested_model_mode"] = body.model_mode
     skill["requested_ollama_model"] = body.ollama_model
@@ -184,18 +188,24 @@ def remove_deleted_files(paths=None):
 
 
 def graph_client():
+    if settings.mail_provider == "gmail" and settings.gmail_transport == "imap":
+        from gmail_imap import GmailIMAP
+        return GmailIMAP()
+    if settings.mail_provider == "gmail":
+        from gmailbox import Gmail
+        return Gmail()
     from mailbox import Outlook
     return Outlook()
 
 
-def send_mail(recipient, subject, body, file=None):
-    if settings.app_demo:
+def send_mail(recipient, subject, body, file=None, in_reply_to=""):
+    if settings.demo_mail:
         with session() as db:
             db.add(LocalMail(recipient=recipient, subject=subject, body=body, file_id=file.id if file else ""))
         return "demo"
     client = graph_client()
     if not client.enabled:
-        raise RuntimeError("Outlook 尚未配置。请设置 Graph 授权参数")
+        raise RuntimeError("邮箱尚未配置。请完成邮箱授权或填写 Gmail 应用专用密码")
     attachment = None
     if file:
         raw = (settings.data / file.path).read_bytes()
@@ -203,7 +213,10 @@ def send_mail(recipient, subject, body, file=None):
             body += f"\n报告较大，请登录 {settings.app_public_url} 查看并下载。"
         else:
             attachment = (file.name, raw)
-    client.send(recipient, subject, body, attachment)
+    if in_reply_to and hasattr(client, "send_reply"):
+        client.send_reply(recipient, subject, body, attachment, in_reply_to=in_reply_to)
+    else:
+        client.send(recipient, subject, body, attachment)
     return "accepted"
 
 
@@ -223,7 +236,8 @@ def deliver_pending():
     try:
         result = json.loads(job.result)
         message = result.get("message") or result.get("answer") or "合同处理已完成，报告见附件。"
-        status = send_mail(user.email, f"合同审查结果 [{job.id[:8]}]", message, file)
+        subject = f"Contract review result [{job.id[:8]}]" if result.get("language") == "en" else f"合同审查结果 [{job.id[:8]}]"
+        status = send_mail(user.email, subject, message, file, in_reply_to=json.loads(job.skill).get("mail_message_id", ""))
         error = ""
     except Exception as exc:
         import urllib.error
@@ -246,7 +260,7 @@ def job_view(db, job, detail=False):
              "instruction": job.instruction, "created": job.created, "error": job.error,
              "report_file": job.report_file, "delivery": delivery.state if delivery else "",
              "model_mode": skill.get("model_mode") or ("ollama" if skill.get("ollama_model") else ""),
-             "model_name": skill.get("ollama_model", "")}
+             "model_name": skill.get("api_model", "") if skill.get("model_mode") == "api" else skill.get("ollama_model", "")}
     if detail:
         value.update(result=json.loads(job.result) or None, report=job.report)
     return value

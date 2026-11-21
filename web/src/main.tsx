@@ -1,3 +1,4 @@
+import { t, useLanguage, LanguageSwitch, getLanguage } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -77,15 +78,16 @@ type Trace = { id: number; stage: string; title: string; detail: string };
 type HistoryTarget = { kind: "contract" | "job"; id: string; name: string };
 type VisibleRetrievalSource = Exclude<NonNullable<Evidence["retrieval_sources"]>[number], "survey">;
 const retrievalSourceLabels: Record<VisibleRetrievalSource, string> = {
-  keyword: "关键词检索",
-  vector: "向量检索",
-  fallback: "文档开头",
-  adjacent: "相邻段落",
+  keyword: t("关键词检索"),
+  vector: t("向量检索"),
+  fallback: t("文档开头"),
+  adjacent: t("相邻段落"),
 };
 function modelLabel(mode?: string, name?: string) {
-  if (mode === "ollama") return name ? `${name} · Ollama` : "本地 Ollama";
+  if (mode === "ollama") return name ? `${name} · Ollama` : t("本地 Ollama");
+  if (mode === "api") return name ? `${name} · API` : "DeepSeek · API";
   if (mode === "tacc") return "Qwen · TACC";
-  return "演示模式";
+  return t("演示模式");
 }
 const activeStates = [
   "queued",
@@ -98,22 +100,23 @@ const activeStates = [
   "rendering",
 ];
 const statusLabel: Record<string, string> = {
-  queued: "排队中",
-  waiting_tacc: "等待学校 GPU 集群",
-  tacc_client: "等待 TACC 回复",
-  parsing: "解析合同",
-  surveying: "通读合同",
-  extracting: "提取条款",
-  validating: "验证证据",
-  rendering: "生成报告",
-  completed: "已完成",
-  partial: "部分待复核",
-  failed: "处理失败",
-  needs_input: "待补充",
-  awaiting_confirmation: "来件待确认",
+  queued: t("排队中"),
+  waiting_tacc: t("等待学校 GPU 集群"),
+  tacc_client: t("等待 TACC 回复"),
+  parsing: t("解析合同"),
+  surveying: t("通读合同"),
+  extracting: t("提取条款"),
+  validating: t("验证证据"),
+  rendering: t("生成报告"),
+  completed: t("已完成"),
+  partial: t("部分待复核"),
+  failed: t("处理失败"),
+  needs_input: t("待补充"),
+  awaiting_confirmation: t("来件待确认"),
 };
 
 function App() {
+  useLanguage();
   const [config, setConfig] = useState<any>(null);
   const [user, setUser] = useState<User | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -160,9 +163,9 @@ function App() {
   const [ollamaModelsError, setOllamaModelsError] = useState("");
   const canSelectModel = Boolean(config && config.model_mode !== "demo" && user?.role === "legal");
   const preference = canSelectModel ? modelPreference : "";
-  const requestedMode = preference === "tacc" ? "tacc" : preference.startsWith("ollama:") ? "ollama" : "";
+  const requestedMode = preference === "tacc" ? "tacc" : preference === "api" ? "api" : preference.startsWith("ollama:") ? "ollama" : "";
   const ollamaModel = requestedMode === "ollama" ? preference.slice("ollama:".length) : "";
-  const selectedModelOption = preference || (config?.model_mode === "tacc" ? "tacc" : "");
+  const selectedModelOption = preference || (config?.model_mode === "tacc" ? "tacc" : config?.model_mode === "api" ? "api" : "");
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 900px)");
@@ -199,7 +202,7 @@ function App() {
   async function openAgentReview(contractId: string, jobId: string) {
     const contract = contracts.find(item => item.id === contractId);
     if (!contract) {
-      setError("这份合同已不在档案中");
+      setError(t("这份合同已不在档案中"));
       return;
     }
     await selectContract(contract);
@@ -227,7 +230,7 @@ function App() {
     userRef.current = value;
     try {
       const previousOllamaModel = localStorage.getItem("ollama-model:" + value.id);
-      setModelPreference(localStorage.getItem("model-selection:" + value.id) ??
+      setModelPreference(localStorage.getItem("model-selection-v2:" + value.id) ??
         (previousOllamaModel ? `ollama:${previousOllamaModel}` : ""));
     } catch {
       setModelPreference("");
@@ -248,7 +251,7 @@ function App() {
   function chooseModel(model: string, userId: string) {
     setModelPreference(model);
     try {
-      localStorage.setItem("model-selection:" + userId, model);
+      localStorage.setItem("model-selection-v2:" + userId, model);
     } catch {
       // The selection still applies within the current browser session.
     }
@@ -278,7 +281,7 @@ function App() {
     localRef.current = value;
     if (user && selectedRef.current)
       await saveLocal(user.id, selectedRef.current, value).catch(() =>
-        setError("浏览器本地存储不可用，云端任务仍会保存。"),
+        setError(t("浏览器本地存储不可用，云端任务仍会保存。")),
       );
   }
   async function selectContract(contract: Contract) {
@@ -381,7 +384,7 @@ function App() {
                     next.result?.answer ||
                     next.result?.message ||
                     next.error ||
-                    "任务已完成。",
+                    t("任务已完成。"),
                   job: id,
                 },
               ],
@@ -421,13 +424,13 @@ function App() {
       if (kind === "contract") {
         setContracts(current => current.filter(contract => contract.id !== id));
         if (selectedRef.current === id) showDesk();
-        setNotice("合同及其历史记录已删除");
+        setNotice(t("合同及其历史记录已删除"));
         await clearContractHistory(user.id, id).catch(() =>
-          setNotice("合同已删除，当前浏览器的本地历史清理失败"),
+          setNotice(t("合同已删除，当前浏览器的本地历史清理失败")),
         );
       } else {
         if (selected) await selectContract(selected);
-        setNotice("审查记录已删除");
+        setNotice(t("审查记录已删除"));
       }
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : String(e));
@@ -442,7 +445,7 @@ function App() {
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("company", selected?.company || "未归类");
+      form.append("company", selected?.company || t("未归类"));
       const contract = await api<Contract>("/contracts", "POST", form);
       await refreshContracts();
       await selectContract(contract);
@@ -457,7 +460,7 @@ function App() {
     setBusy(true);
     setError("");
     try {
-      const text = local.draft.trim() || "请按所选清单审查这份合同";
+      const text = local.draft.trim() || t("请按所选清单审查这份合同");
       const next = await api<Job>(
         "/contracts/" + selected.id + "/jobs",
         "POST",
@@ -549,45 +552,45 @@ function App() {
     );
   return (
     <div className={"app " + (!sidebar ? "collapsed" : "")}>
-      {compact && sidebar && <button tabIndex={-1} type="button" className="drawer-scrim" aria-label="收起导航" onClick={closeDrawer} />}
-      {sidebar && (
-        <aside className="sidebar" id="workspace-nav" aria-label="工作台导航"
+      {t(compact && sidebar && <button tabIndex={-1} type="button" className="drawer-scrim" aria-label={t("收起导航")} onClick={closeDrawer} />)}
+      {t(sidebar && (
+        <aside className="sidebar" id="workspace-nav" aria-label={t("工作台导航")}
           onKeyDown={event => { if (event.key === "Escape" && !modal) closeDrawer(); }}>
           <div className="brand">
             <div className="brand-mark">
               <FileCheck2 size={22} />
             </div>
             <span>
-              Clause<span className="brand-sub">合同审查工作台</span>
+              Clause<span className="brand-sub">{t("合同审查工作台")}</span>
             </span>
-            {compact && <button className="drawer-close" aria-label="关闭侧栏" onClick={closeDrawer} ref={drawerClose}><X size={18}/></button>}
+            {t(compact && <button className="drawer-close" aria-label={t("关闭侧栏")} onClick={closeDrawer} ref={drawerClose}><X size={18}/></button>)}
           </div>
           <button className={"desk-link" + (!selected ? " current" : "")} onClick={showDesk} aria-current={!selected ? "page" : undefined}>
-            {user.role === "legal" ? <LayoutDashboard size={17}/> : <LibraryBig size={17}/>}
-            {user.role === "legal" ? "工作台首页" : "合同档案总览"}
+            {t(user.role === "legal" ? <LayoutDashboard size={17}/> : <LibraryBig size={17}/>)}
+            {t(user.role === "legal" ? t("工作台首页") : t("合同档案总览"))}
             <ChevronRight size={14}/>
           </button>
           <div className="sidebar-title">
-            <span>合同档案 <small lang="en">Files</small></span>
+            <span>{t("合同档案")}<small lang="en">Files</small></span>
             <span className="file-count">{contracts.length}</span>
           </div>
           <div className="search">
             <Search size={15} />
             <input
-              aria-label="搜索合同"
-              placeholder="搜索公司或合同"
+              aria-label={t("搜索合同")}
+              placeholder={t("搜索公司或合同")}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
-          <nav className="contract-list" aria-label="合同与历史记录">
-            {Object.entries(groups).map(([company, items]) => (
+          <nav className="contract-list" aria-label={t("合同与历史记录")}>
+            {t(Object.entries(groups).map(([company, items]) => (
               <div className="company" key={company}>
                 <div className="company-name">
                   <Folder size={14} />
-                  {company}
+                  {t(company)}
                 </div>
-                {items.map((c) => (
+                {t(items.map((c) => (
                   <div key={c.id}>
                     <div className="history-row">
                     <button
@@ -602,90 +605,88 @@ function App() {
                       <span>
                         {c.name}
                         <small>
-                          {user.role === "admin"
+                          {t(user.role === "admin"
                             ? c.owner_email
-                            : new Date(c.created * 1000).toLocaleDateString()}
+                            : new Date(c.created * 1000).toLocaleDateString())}
                         </small>
                       </span>
                     </button>
-                    {user.role === "legal" && (
+                    {t(user.role === "legal" && (
                       <button className="history-delete" disabled={busy}
-                        aria-label={`删除合同 ${c.name}`} title="删除合同"
+                        aria-label={`删除合同 ${c.name}`} title={t("删除合同")}
                         onClick={() => askToDelete({ kind: "contract", id: c.id, name: c.name })}>
                         <Trash2 size={15} />
                       </button>
-                    )}
+                    ))}
                     </div>
-                    {selected?.id === c.id && jobs.length > 0 && (
+                    {t(selected?.id === c.id && jobs.length > 0 && (
                       <div className="job-list">
-                        {jobs.map((j) => (
+                        {t(jobs.map((j) => (
                           <div className="history-row" key={j.id}>
                           <button
                             className={job?.id === j.id ? "current" : ""}
                             onClick={() => { closeDrawer(); setGeneral(false); openJob(j.id).catch(fail); }}
                           >
                             <Circle size={7} />
-                            <span>{j.instruction || "标准合同审查"}</span>
+                            <span>{t(j.instruction || t("标准合同审查"))}</span>
                           </button>
                           <button className="history-delete" disabled={busy}
-                            aria-label={`删除审查记录 ${j.instruction || "标准合同审查"}`} title="删除审查记录"
-                            onClick={() => askToDelete({ kind: "job", id: j.id, name: j.instruction || "标准合同审查" })}>
+                            aria-label={`删除审查记录 ${j.instruction || t("标准合同审查")}`} title={t("删除审查记录")}
+                            onClick={() => askToDelete({ kind: "job", id: j.id, name: j.instruction || t("标准合同审查") })}>
                             <Trash2 size={14} />
                           </button>
                           </div>
-                        ))}
+                        )))}
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
+                )))}
               </div>
-            ))}
-            {!Object.keys(groups).length && (
+            )))}
+            {t(!Object.keys(groups).length && (
               <p className="quiet sidebar-empty">
-                {filter.trim() ? "没有匹配的合同" : "暂无合同档案"}
+                {t(filter.trim() ? t("没有匹配的合同") : t("暂无合同档案"))}
               </p>
-            )}
+            ))}
           </nav>
           <div className="sidebar-bottom">
-            {user.role === "legal" && (
+            {t(user.role === "legal" && (
               <>
                 <button onClick={() => setModal("skills")}>
-                  <Settings2 size={16} /> 我的 Skills
-                </button>
+                  <Settings2 size={16} /> {t("我的 Skills")}</button>
                 <button
                   onClick={async () => {
                     setModal("mail");
                     if (config?.demo) setLocalMails(await api("/mail/local"));
                   }}
                 >
-                  <Mail size={16} /> 邮件处理
-                </button>
+                  <Mail size={16} /> {t("邮件处理")}</button>
               </>
-            )}
+            ))}
             <div className="account">
               <span className="avatar">
-                {user.role === "admin" ? (
+                {t(user.role === "admin" ? (
                   <ShieldCheck size={18} />
                 ) : (
                   user.email[0].toUpperCase()
-                )}
+                ))}
               </span>
               <span>
-                {user.role === "admin" ? "总账户" : "法务工作空间"}
+                {t(user.role === "admin" ? t("总账户") : t("法务工作空间"))}
                 <small>{user.email}</small>
               </span>
-              <button aria-label="退出登录" onClick={logout}>
+              <button aria-label={t("退出登录")} onClick={logout}>
                 <LogOut size={16} />
               </button>
             </div>
           </div>
         </aside>
-      )}
+      ))}
       <main className="workspace" inert={compact && sidebar}>
         <header>
           <button
             className="icon-button"
-            aria-label="切换侧栏"
+            aria-label={t("切换侧栏")}
             aria-expanded={sidebar}
             aria-controls={sidebar ? "workspace-nav" : undefined}
             ref={sidebarToggle}
@@ -694,56 +695,56 @@ function App() {
             <PanelLeft size={18} />
           </button>
           <div className="breadcrumb">
-            {selected ? (
+            {t(selected ? (
               <>
-                <button onClick={showDesk}>合同档案</button>
+                <button onClick={showDesk}>{t("合同档案")}</button>
                 <ChevronRight size={14} />
                 <strong>{selected.name}</strong>
               </>
             ) : (
-              <><LibraryBig size={16} /><strong>{user.role === "admin" ? "合同档案" : "法务工作台"}</strong></>
-            )}
+              <><LibraryBig size={16} /><strong>{t(user.role === "admin" ? t("合同档案") : t("法务工作台"))}</strong></>
+            ))}
           </div>
-          {canSelectModel ? (
+          {t(canSelectModel ? (
             <label className="mode live ollama-selector">
               <span aria-hidden="true" />
-              <select aria-label="选择对话与审查模型" value={selectedModelOption}
+              <select aria-label={t("选择对话与审查模型")} value={selectedModelOption}
                 onChange={(event) => chooseModel(event.target.value, user.id)}>
-                {config.model_mode === "ollama" && (
-                  <option value="">{modelLabel("ollama", config.model_name)}</option>
-                )}
-                {ollamaModel && !ollamaModels?.includes(ollamaModel) && (
-                  <option value={`ollama:${ollamaModel}`}>{modelLabel("ollama", ollamaModel)}{ollamaModels && "（不可用）"}</option>
-                )}
-                {ollamaModels?.filter((name) => name !== config.model_name || name === ollamaModel).map((name) => (
-                  <option key={name} value={`ollama:${name}`}>{modelLabel("ollama", name)}</option>
+                {t(config.model_mode === "ollama" && (
+                  <option value="">{t(modelLabel("ollama", config.model_name))}</option>
                 ))}
+                {t(ollamaModel && !ollamaModels?.includes(ollamaModel) && (
+                  <option value={`ollama:${ollamaModel}`}>{t(modelLabel("ollama", ollamaModel))}{t(ollamaModels && t("（不可用）"))}</option>
+                ))}
+                {t(ollamaModels?.filter((name) => name !== config.model_name || name === ollamaModel).map((name) => (
+                  <option key={name} value={`ollama:${name}`}>{t(modelLabel("ollama", name))}</option>
+                )))}
+                <option value="api" disabled={!config.api_configured}>{modelLabel("api", config.api_model_name)}</option>
                 <option value="tacc" disabled={!config.tacc_configured}>
-                  {modelLabel("tacc")}{!config.tacc_configured && "（连接未配置）"}
+                  {t(modelLabel("tacc"))}{t(!config.tacc_configured && t("（连接未配置）"))}
                 </option>
-                {!ollamaModels?.length && (
-                  <option disabled>{ollamaModelsError || (ollamaModels ? "暂无已安装的对话模型" : "正在读取模型列表…")}</option>
-                )}
+                {t(!ollamaModels?.length && (
+                  <option disabled>{t(ollamaModelsError || (ollamaModels ? t("暂无已安装的对话模型") : t("正在读取模型列表…")))}</option>
+                ))}
               </select>
             </label>
           ) : (
             <span className={"mode " + (demoMode ? "" : "live")}>
-              <span /> {modelLabel(config?.model_mode, config?.model_name)}
+              <span /> {t(modelLabel(config?.model_mode, config?.model_name))}
             </span>
-          )}
-          {user.role === "legal" && (
+          ))}
+          {t(user.role === "legal" && (
             <button
               className="top-upload"
               onClick={() => fileInput.current?.click()}
               disabled={busy}
             >
-              <Plus size={15} /> 添加合同
-            </button>
-          )}
+              <Plus size={15} /> {t("添加合同")}</button>
+          ))}
         </header>
         <input
           ref={fileInput}
-          aria-label="上传合同"
+          aria-label={t("上传合同")}
           type="file"
           accept=".pdf,.docx,.txt"
           hidden
@@ -752,23 +753,23 @@ function App() {
             e.target.value = "";
           }}
         />
-        {error && (
+        {t(error && (
           <div className="alert" role="alert">
-            {error}
-            <button aria-label="关闭错误提示" onClick={() => setError("")}>
+            {t(error)}
+            <button aria-label={t("关闭错误提示")} onClick={() => setError("")}>
               <X size={15} />
             </button>
           </div>
-        )}
-        {notice && (
+        ))}
+        {t(notice && (
           <div className="notice" role="status">
-            {notice}
-            <button aria-label="关闭通知" onClick={() => setNotice("")}>
+            {t(notice)}
+            <button aria-label={t("关闭通知")} onClick={() => setNotice("")}>
               <X size={15} />
             </button>
           </div>
-        )}
-        {!selected && user.role === "legal" ? (
+        ))}
+        {t(!selected && user.role === "legal" ? (
           <AssistantChat key={user.id + ":general"} userId={user.id} demo={demoMode}
             deskVisit={deskVisit}
             deskContracts={contracts} onOpenContract={id => {
@@ -784,30 +785,29 @@ function App() {
             <div className="archive-heading">
               <div>
                 <span className="eyebrow" lang="en">Document archive</span>
-                <h1 id="archive-title">合同档案总览</h1>
-                <p>按合同查阅原件与最终审查报告。</p>
+                <h1 id="archive-title">{t("合同档案总览")}</h1>
+                <p>{t("按合同查阅原件与最终审查报告。")}</p>
               </div>
               <LibraryBig size={40} strokeWidth={1.2} aria-hidden="true"/>
             </div>
             <div className="archive-register">
-              <div className="register-head"><h2>归档合同</h2><span>{contracts.length} 份合同</span></div>
-              {Object.values(groups).flat().map(contract => (
+              <div className="register-head"><h2>{t("归档合同")}</h2><span>{contracts.length} {t("份合同")}</span></div>
+              {t(Object.values(groups).flat().map(contract => (
                 <button className="archive-file" key={contract.id} onClick={() => selectContract(contract)}>
                   <FileText size={20} />
-                  <span><strong>{contract.name}</strong><small>{contract.company} · {contract.owner_email}</small></span>
-                  <time dateTime={new Date(contract.created * 1000).toISOString()}>{new Date(contract.created * 1000).toLocaleDateString("zh-CN")}</time>
+                  <span><strong>{contract.name}</strong><small>{t(contract.company)} · {contract.owner_email}</small></span>
+                  <time dateTime={new Date(contract.created * 1000).toISOString()}>{t(new Date(contract.created * 1000).toLocaleDateString(getLanguage() === "en" ? "en-GB" : "zh-CN"))}</time>
                   <ChevronRight size={16}/>
                 </button>
-              ))}
-              {!Object.keys(groups).length && <p className="archive-empty">{filter ? "没有匹配的合同" : "暂无归档合同"}</p>}
+              )))}
+              {t(!Object.keys(groups).length && <p className="archive-empty">{t(filter ? t("没有匹配的合同") : t("暂无归档合同"))}</p>)}
             </div>
           </section>
         ) : fileState !== "ready" ? (
           <div className="archive-load" role="status">
-            {fileState === "loading"
-              ? <><LoaderCircle className="spin" size={20}/> 正在打开合同档案…</>
-              : <><FileText size={20}/> 无法打开合同档案
-                <button className="secondary" onClick={() => selectContract(selected)}>重新打开</button></>}
+            {t(fileState === "loading"
+              ? <><LoaderCircle className="spin" size={20}/> {t("正在打开合同档案…")}</>
+              : <><FileText size={20}/> {t("无法打开合同档案")}<button className="secondary" onClick={() => selectContract(selected)}>{t("重新打开")}</button></>)}
           </div>
         ) : user.role === "admin" ? (
           <section className="archive-view">
@@ -817,67 +817,67 @@ function App() {
               </div>
             </div>
             <div className="archive-register">
-              <div className="register-head"><h2>文件目录</h2><span>{artifacts.length} 份文件</span></div>
-              {artifacts.map(f => (
+              <div className="register-head"><h2>{t("文件目录")}</h2><span>{artifacts.length} {t("份文件")}</span></div>
+              {t(artifacts.map(f => (
                 <a key={f.id} className="archive-file" href={fileUrl(f.id, true)}>
-                  {f.kind === "input" ? <FileText size={21}/> : <FileCheck2 size={21}/>}
-                  <span><strong>{f.name}</strong><small>{f.kind === "input" ? "合同原件" : "最终审查报告"}</small></span>
-                  <time dateTime={new Date(f.created * 1000).toISOString()}>{new Date(f.created * 1000).toLocaleDateString("zh-CN")}</time>
+                  {t(f.kind === "input" ? <FileText size={21}/> : <FileCheck2 size={21}/>)}
+                  <span><strong>{f.name}</strong><small>{t(f.kind === "input" ? t("合同原件") : t("最终审查报告"))}</small></span>
+                  <time dateTime={new Date(f.created * 1000).toISOString()}>{t(new Date(f.created * 1000).toLocaleDateString(getLanguage() === "en" ? "en-GB" : "zh-CN"))}</time>
                   <Download size={16}/>
                 </a>
-              ))}
+              )))}
             </div>
           </section>
         ) : (
           <ReviewPanes key={selected.id}>
             <section className="chat-panel">
-              <div className="chat-mode-tabs" role="group" aria-label="合同处理方式">
-                <button aria-pressed={!general} className={!general ? "active" : ""} onClick={() => setGeneral(false)}>合同审查</button>
-                <button aria-pressed={general} className={general ? "active" : ""} onClick={() => setGeneral(true)}>自由对话与工具</button>
+              <div className="chat-mode-tabs" role="group" aria-label={t("合同处理方式")}>
+                <button aria-pressed={!general} className={!general ? "active" : ""} onClick={() => setGeneral(false)}>{t("合同审查")}</button>
+                <button aria-pressed={general} className={general ? "active" : ""} onClick={() => setGeneral(true)}>{t("自由对话与工具")}</button>
               </div>
-              {general ? <AssistantChat key={user.id + ":" + selected.id} userId={user.id} contractId={selected.id}
+              {t(general ? <AssistantChat key={user.id + ":" + selected.id} userId={user.id} contractId={selected.id}
                 demo={demoMode} modelMode={requestedMode} ollamaModel={ollamaModel}
                 onSkillsChanged={refreshSkills} onReview={openAgentReview}/> : <>
               <div className="chat-scroll">
                 <header className="matter-cover">
                   <div className="matter-cover-heading">
                     <span lang="en"><FileText size={15} aria-hidden="true" /> Contract file</span>
-                    <a aria-label="下载原件" title="下载原件" href={fileUrl(selected.file_id, true)}>
+                    <a aria-label={t("下载原件")} title={t("下载原件")} href={fileUrl(selected.file_id, true)}>
                       <Download size={16} />
                     </a>
                   </div>
                   <h1>{selected.name}</h1>
                   <div className="matter-file-meta">
-                    <button onClick={() => setModal("company")} aria-label="修改公司归类" title="修改公司归类">
+                    <button onClick={() => setModal("company")} aria-label={t("修改公司归类")} title={t("修改公司归类")}>
                       <Folder size={13} /> {selected.company} <Pencil size={11} />
                     </button>
                     <time dateTime={new Date(selected.created * 1000).toISOString()}>
-                      {new Date(selected.created * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                      {t(new Date(selected.created * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }))}
                     </time>
                   </div>
                 </header>
-                {!local.messages.length && !job && (
+                {t(!local.messages.length && !job && (
                   <div className="assistant-intro">
-                    <h2>选择审查范围</h2>
-                    <p>选用标准审查或指定条款，也可在下方输入要求。</p>
+                    <h2>{t("选择审查范围")}</h2>
+                    <p>{t("选用标准审查或指定条款，也可在下方输入要求。")}</p>
                     <div className="suggestions">
-                      {[
-                        "进行标准合同审查",
-                        "自动续约需要提前多久通知？",
-                        "检查责任上限与终止条款",
+                      {t([
+                        t("进行标准合同审查"),
+                        t("自动续约需要提前多久通知？"),
+                        t("检查责任上限与终止条款"),
                       ].map((text) => (
                         <button
                           key={text}
                           onClick={() => persist({ ...local, draft: text })}
                         >
-                          {text}
+                          {t(text)}
                           <ChevronRight size={14} />
                         </button>
-                      ))}
+                      )))}
                     </div>
                   </div>
-                )}
-                {local.messages.map((message) =>
+                ))}
+                {t(local.messages.map((message) =>
                   message.role === "user" ? (
                     <div className="user-bubble" key={message.id}>
                       {message.text}
@@ -887,46 +887,45 @@ function App() {
                       className="answer-detail prior-answer"
                       key={message.id}
                     >
-                      <summary>历史审查回答</summary>
+                      <summary>{t("历史审查回答")}</summary>
                       <p>{message.text}</p>
-                      {message.job && (
+                      {t(message.job && (
                         <button
                           className="text-button"
                           onClick={() => openJob(message.job!).catch(fail)}
                         >
-                          打开结果
-                        </button>
-                      )}
+                          {t("打开结果")}</button>
+                      ))}
                     </details>
                   ) : null,
-                )}
-                {job && (
+                ))}
+                {t(job && (
                   <div className="assistant-message">
                     <div className="assistant-name">
-                      <div className="small-logo">C</div> Clause{" "}
+                      <div className="small-logo">C</div> Clause{t(" ")}
                       <span>
-                        {modelLabel(job.result?.model_mode || job.model_mode || config?.model_mode,
-                          job.result?.model_name || job.model_name || config?.model_name)}
+                        {t(modelLabel(job.result?.model_mode || job.model_mode || config?.model_mode,
+                          job.result?.model_name || job.model_name || config?.model_name))}
                       </span>
                     </div>
                     <div className="trace">
                       <div className="trace-heading">
-                        {running ? (
+                        {t(running ? (
                           <LoaderCircle size={15} className="spin" />
                         ) : job.state === "completed" ? (
                           <Check size={15} />
                         ) : (
                           <Circle size={13} />
-                        )}
-                        <b>{statusLabel[job.state] || job.state}</b>
+                        ))}
+                        <b>{t(statusLabel[job.state] || job.state)}</b>
                         <span>
-                          {job.result?.seconds ? job.result.seconds + "s" : ""}
+                          {t(job.result?.seconds ? job.result.seconds + "s" : "")}
                         </span>
                       </div>
                       <details open={running}>
-                        <summary>处理记录 · {events.length} 条</summary>
+                        <summary>{t("处理记录 ·")}{events.length} {t("条")}</summary>
                         <div className="trace-list">
-                          {events.map((e) => (
+                          {t(events.map((e) => (
                             <div key={e.id}>
                               <span
                                 className={
@@ -936,18 +935,17 @@ function App() {
                               />
                               <div>
                                 {e.title}
-                                {e.detail && <small>{e.detail}</small>}
+                                {t(e.detail && <small>{e.detail}</small>)}
                               </div>
                             </div>
-                          ))}
+                          )))}
                         </div>
                       </details>
                     </div>
-                    {job.state === "awaiting_confirmation" && (
+                    {t(job.state === "awaiting_confirmation" && (
                       <>
                         <p>
-                          邮箱合同等待你确认归属。确认后开始审查并回传报告。
-                        </p>
+                          {t("邮箱合同等待你确认归属。确认后开始审查并回传报告。")}</p>
                         <button
                           className="primary"
                           onClick={async () => {
@@ -959,44 +957,41 @@ function App() {
                             }
                           }}
                         >
-                          确认并开始审查
-                        </button>
+                          {t("确认并开始审查")}</button>
                       </>
-                    )}
-                    {terminal && job.result && (
+                    ))}
+                    {t(terminal && job.result && (
                       <>
                         <p className="result-summary">
-                          {job.result.message ||
+                          {t(job.result.message ||
                             (rows.length
                               ? <>
-                                <span className="wide-summary">已完成 {rows.length} 类条款检查，引用与清单判断见右侧。</span>
-                                <span className="compact-summary">已完成 {rows.length} 类条款检查。可在「审查底稿」查看引文与清单判断。</span>
+                                <span className="wide-summary">{t("已完成")}{rows.length} {t("类条款检查，引用与清单判断见右侧。")}</span>
+                                <span className="compact-summary">{t("已完成")}{rows.length} {t("类条款检查。可在「审查底稿」查看引文与清单判断。")}</span>
                               </>
-                              : "处理已结束。")}
+                              : t("处理已结束。")))}
                         </p>
                         <div className="summary-chips">
                           <span>
-                            {rows.filter((r) => r.status === "found").length}{" "}
-                            类有证据
-                          </span>
+                            {rows.filter((r) => r.status === "found").length}{t(" ")}
+                            {t("类有证据")}</span>
                           <span>
                             {
                               rows.filter((r) => r.assessment === "待核验")
                                 .length
-                            }{" "}
-                            类待核验
-                          </span>
+                            }{t(" ")}
+                            {t("类待核验")}</span>
                         </div>
-                        {job.result.answer && (
+                        {t(job.result.answer && (
                           <details className="answer-detail">
-                            <summary>查看本次回答</summary>
+                            <summary>{t("查看本次回答")}</summary>
                             <p>{job.result.answer}</p>
                           </details>
-                        )}
+                        ))}
                       </>
-                    )}
-                    {job.error && <p className="error-text">{job.error}</p>}
-                    {job.report_file && (
+                    ))}
+                    {t(job.error && <p className="error-text">{job.error}</p>)}
+                    {t(job.report_file && (
                       <a
                         className="report-card"
                         href={fileUrl(job.report_file, true)}
@@ -1005,47 +1000,46 @@ function App() {
                           <FileCheck2 size={22} />
                         </div>
                         <span>
-                          <strong>合同审查报告</strong>
-                          <small>Word 文档 · 原文证据与风险表</small>
+                          <strong>{t("合同审查报告")}</strong>
+                          <small>{t("Word 文档 · 原文证据与风险表")}</small>
                         </span>
                         <Download size={18} />
                       </a>
-                    )}
-                    {job.delivery && (
+                    ))}
+                    {t(job.delivery && (
                       <div className="delivery">
                         <Mail size={14} />
                         {
-                          (
+                          t((
                             {
-                              pending: "邮件等待发送",
-                              sending: "邮件发送中",
-                              accepted: "已提交 Outlook 发送",
-                              demo: "结果已保存到演示发件箱",
-                              failed: "邮件发送失败",
-                              uncertain: "发送状态待核对",
+                              pending: t("邮件等待发送"),
+                              sending: t("邮件发送中"),
+                              accepted: t("已提交邮箱发送"),
+                              demo: t("结果已保存到演示发件箱"),
+                              failed: t("邮件发送失败"),
+                              uncertain: t("发送状态待核对"),
                             } as Record<string, string>
-                          )[job.delivery]
+                          )[job.delivery])
                         }
-                        {["failed", "uncertain"].includes(job.delivery) && (
+                        {t(["failed", "uncertain"].includes(job.delivery) && (
                           <button
                             onClick={async () => {
                               await api("/jobs/" + job.id + "/resend", "POST");
                               await openJob(job.id);
                             }}
                           >
-                            重发
-                          </button>
-                        )}
+                            {t("重发")}</button>
+                        ))}
                       </div>
-                    )}
+                    ))}
                   </div>
-                )}
+                ))}
               </div>
               <div className="composer-wrap">
                 <div className="composer">
                   <textarea
-                    aria-label="审查要求"
-                    placeholder="询问这份合同，或输入审查要求…"
+                    aria-label={t("审查要求")}
+                    placeholder={t("询问这份合同，或输入审查要求…")}
                     value={local.draft}
                     onChange={(e) =>
                       persist({ ...local, draft: e.target.value })
@@ -1064,51 +1058,50 @@ function App() {
                   <div className="composer-controls">
                     <button
                       className="icon-button"
-                      aria-label="添加新合同"
+                      aria-label={t("添加新合同")}
                       onClick={() => fileInput.current?.click()}
                     >
                       <Paperclip size={18} />
                     </button>
                     <select
-                      aria-label="选择 Skill"
+                      aria-label={t("选择 Skill")}
                       value={skill}
                       onChange={(e) => setSkill(e.target.value)}
                     >
-                      <option value="">标准审查 · 8 类</option>
-                      {skills.map((s) => (
+                      <option value="">{t("标准审查 · 8 类")}</option>
+                      {t(skills.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name}
                         </option>
-                      ))}
+                      )))}
                     </select>
                     <button
                       className="send-button"
-                      aria-label="开始审查"
+                      aria-label={t("开始审查")}
                       onClick={submit}
                       disabled={busy || running}
                     >
-                      {running ? (
+                      {t(running ? (
                         <LoaderCircle className="spin" size={17} />
                       ) : (
                         <ArrowUp size={19} />
-                      )}
-                      <span>开始审查</span>
+                      ))}
+                      <span>{t("开始审查")}</span>
                     </button>
                   </div>
                 </div>
                 <div className="composer-note">
-                  聊天保存在本浏览器 · 结果与文件保存到服务器
-                </div>
+                  {t("聊天保存在本浏览器 · 结果与文件保存到服务器")}</div>
               </div>
-              </>}
+              </>)}
             </section>
             <section className="document-panel">
-              <div className="document-tabs" role="group" aria-label="审查底稿视图">
-                {[
-                  ["risk", "风险表"],
-                  ["text", "原文证据"],
-                  ["original", "原件"],
-                  ["edit", "编辑报告"],
+              <div className="document-tabs" role="group" aria-label={t("审查底稿视图")}>
+                {t([
+                  ["risk", t("风险表")],
+                  ["text", t("原文证据")],
+                  ["original", t("原件")],
+                  ["edit", t("编辑报告")],
                 ].map(([key, label]) => (
                   <button
                     key={key}
@@ -1116,35 +1109,35 @@ function App() {
                     className={tab === key ? "active" : ""}
                     onClick={() => setTab(key)}
                   >
-                    {label}
+                    {t(label)}
                   </button>
-                ))}
+                )))}
               </div>
               <div className="document-body">
-                {tab === "risk" && (
+                {t(tab === "risk" && (
                   <>
                     <div className="document-title">
                       <h2 lang="en">Review findings</h2>
-                      <p>合同风险与证据{rows.length > 0 && ` · ${rows.length} 项条款`}</p>
+                      <p>{t("合同风险与证据")}{t(rows.length > 0 && ` · ${rows.length} 项条款`)}</p>
                     </div>
-                    {!rows.length ? (
+                    {t(!rows.length ? (
                       <div className="empty-state">
                         <div className="empty-folio" aria-hidden="true"><FileCheck2 size={30} strokeWidth={1.4} /></div>
                         <p>
-                          {running
-                            ? statusLabel[job!.state] || "审查处理中"
-                            : job?.error || job?.result?.message || "提交审查后，可在这里逐条核对判断与原文。"}
+                          {t(running
+                            ? statusLabel[job!.state] || t("审查处理中")
+                            : job?.error || job?.result?.message || t("提交审查后，可在这里逐条核对判断与原文。"))}
                         </p>
                       </div>
                     ) : (
                       <div className="risk-list">
-                        {rows.map((row, i) => (
+                        {t(rows.map((row, i) => (
                           <article className="risk-row" key={row.category}>
                             <div className="risk-top">
                               <span className="risk-number">
-                                {String(i + 1).padStart(2, "0")}
+                                {t(String(i + 1).padStart(2, "0"))}
                               </span>
-                              <h3>{row.label}</h3>
+                              <h3>{t(row.label)}</h3>
                               <span
                                 className={
                                   "tag " +
@@ -1158,11 +1151,11 @@ function App() {
                                 {row.assessment}
                               </span>
                             </div>
-                            {row.finding && (
+                            {t(row.finding && (
                               <p className="finding">{row.finding}</p>
-                            )}
-                            {row.explanation && <p>{row.explanation}</p>}
-                            {row.evidence.map((e, index) => {
+                            ))}
+                            {t(row.explanation && <p>{row.explanation}</p>)}
+                            {t(row.evidence.map((e, index) => {
                               const sourceLabel = e.retrieval_sources
                                 ?.filter((source) => source !== "survey")
                                 .map((source) => retrievalSourceLabels[source])
@@ -1175,55 +1168,53 @@ function App() {
                                 >
                                   <span>
                                     <b className="reference-id">{e.paragraph_id}</b>
-                                    {e.page ? " · 第 " + e.page + " 页" : ""}
-                                    {sourceLabel && (
-                                      <span className="quote-source">{sourceLabel}</span>
-                                    )}
+                                    {t(e.page ? t(" · 第 ") + e.page + t(" 页") : "")}
+                                    {t(sourceLabel && (
+                                      <span className="quote-source">{t(sourceLabel)}</span>
+                                    ))}
                                     <ChevronRight size={14} className="quote-arrow" aria-hidden="true" />
                                   </span>
                                   <q>{e.quote}</q>
                                 </button>
                               );
-                            })}
-                            {row.status === "not_found" && (
+                            }))}
+                            {t(row.status === "not_found" && (
                               <div className="not-found">
-                                本次未检出对应原文
-                              </div>
-                            )}
-                            {row.missing.length > 0 && (
-                              <small>待确认 · {row.missing.join(" / ")}</small>
-                            )}
-                            {!!row.checklist?.length && (
+                                {t("本次未检出对应原文")}</div>
+                            ))}
+                            {t(row.missing.length > 0 && (
+                              <small>{t("待确认 ·")}{t(row.missing.join(" / "))}</small>
+                            ))}
+                            {t(!!row.checklist?.length && (
                               <details className="audit-checklist">
-                                <summary>审计核对项 · {row.checklist.length} 项</summary>
+                                <summary>{t("审计核对项 ·")}{row.checklist.length} {t("项")}</summary>
                                 <dl>
-                                  {row.checklist.map((item, index) => (
+                                  {t(row.checklist.map((item, index) => (
                                     <div key={index}>
                                       <dt>{item.requirement}</dt>
                                       <dd>{item.assessment}</dd>
                                     </div>
-                                  ))}
+                                  )))}
                                 </dl>
                               </details>
-                            )}
+                            ))}
                           </article>
-                        ))}
+                        )))}
                       </div>
-                    )}
+                    ))}
                   </>
-                )}
-                {tab === "text" && (
+                ))}
+                {t(tab === "text" && (
                   <>
                     <div className="document-title">
                       <h2 lang="en">Source evidence</h2>
                       <p>
-                        合同正文 · {paragraphs.length} 个段落
-                      </p>
+                        {t("合同正文 ·")}{paragraphs.length} {t("个段落")}</p>
                     </div>
-                    {paragraphs.length === 0 && (
-                      <div className="empty-state">解析完成后显示正文</div>
-                    )}
-                    {paragraphs.map((p) => {
+                    {t(paragraphs.length === 0 && (
+                      <div className="empty-state">{t("解析完成后显示正文")}</div>
+                    ))}
+                    {t(paragraphs.map((p) => {
                       const index =
                         highlight?.paragraph_id === p.id
                           ? p.text.indexOf(highlight?.quote || "")
@@ -1241,54 +1232,53 @@ function App() {
                         >
                           <small>
                             {p.id}
-                            {p.page ? " / PAGE " + p.page : ""}
+                            {t(p.page ? " / PAGE " + p.page : "")}
                           </small>
                           <p>
-                            {index >= 0 && highlight ? (
+                            {t(index >= 0 && highlight ? (
                               <>
-                                {p.text.slice(0, index)}
+                                {t(p.text.slice(0, index))}
                                 <mark>{highlight.quote}</mark>
-                                {p.text.slice(index + highlight.quote.length)}
+                                {t(p.text.slice(index + highlight.quote.length))}
                               </>
                             ) : (
                               p.text
-                            )}
+                            ))}
                           </p>
                         </div>
                       );
-                    })}
+                    }))}
                   </>
-                )}
-                {tab === "original" &&
+                ))}
+                {t(tab === "original" &&
                   (selected.name.toLowerCase().endsWith(".pdf") ? (
                     <iframe
-                      title="合同原件"
+                      title={t("合同原件")}
                       className="pdf-frame"
                       src={fileUrl(selected.file_id)}
                     />
                   ) : (
                     <div className="empty-state">
                       <FileText size={32} />
-                      <p>在「原文证据」阅读可定位的合同段落。</p>
+                      <p>{t("在「原文证据」阅读可定位的合同段落。")}</p>
                       <a
                         className="secondary"
                         href={fileUrl(selected.file_id, true)}
                       >
-                        <Download size={16} /> 下载原始文件
-                      </a>
+                        <Download size={16} /> {t("下载原始文件")}</a>
                     </div>
-                  ))}
-                {tab === "edit" && (
+                  )))}
+                {t(tab === "edit" && (
                   <>
                     <div className="document-title">
                       <h2 lang="en">Report draft</h2>
-                      <p>编辑审查报告 · 保存为个人 Word 编辑稿</p>
+                      <p>{t("编辑审查报告 · 保存为个人 Word 编辑稿")}</p>
                     </div>
                     <textarea
                       className="report-editor"
-                      aria-label="报告内容"
+                      aria-label={t("报告内容")}
                       value={editor}
-                      placeholder="审查完成后可编辑报告"
+                      placeholder={t("审查完成后可编辑报告")}
                       disabled={!job?.report_file}
                       onChange={(e) => {
                         setEditor(e.target.value);
@@ -1312,53 +1302,52 @@ function App() {
                           const link = document.createElement("a");
                           link.href = fileUrl(data.file_id, true);
                           link.click();
-                          setNotice("编辑稿已保存并开始下载。");
+                          setNotice(t("编辑稿已保存并开始下载。"));
                         } catch (e) {
                           fail(e);
                         }
                       }}
                     >
-                      <Download size={16} /> 保存并下载编辑稿
-                    </button>
+                      <Download size={16} /> {t("保存并下载编辑稿")}</button>
                   </>
-                )}
+                ))}
               </div>
             </section>
           </ReviewPanes>
-        )}
+        ))}
       </main>
-      {modal && (
+      {t(modal && (
         <dialog ref={modalRef} className="work-dialog"
           onCancel={event => { if (deleting) event.preventDefault(); else setModal(""); }}
-          aria-label={{skills: "我的 Skills", mail: "邮件处理", company: "合同归类", delete: "确认删除历史记录"}[modal]}
+          aria-label={{skills: t("我的 Skills"), mail: t("邮件处理"), company: t("合同归类"), delete: t("确认删除历史记录")}[modal]}
           onClick={event => { if (!deleting && event.target === event.currentTarget) setModal(""); }}>
           <div className="modal">
             <button
               className="modal-close"
-              aria-label="关闭"
+              aria-label={t("关闭")}
               disabled={deleting}
               onClick={() => setModal("")}
             >
               <X size={20} />
             </button>
-            {modal === "delete" && historyTarget && (
+            {t(modal === "delete" && historyTarget && (
               <>
-                <h2>{historyTarget.kind === "contract" ? "删除合同" : "删除审查记录"}</h2>
+                <h2>{t(historyTarget.kind === "contract" ? t("删除合同") : t("删除审查记录"))}</h2>
                 <p className="delete-item">{historyTarget.name}</p>
-                <p className="quiet">{historyTarget.kind === "contract"
-                  ? "合同原件、关联审查记录、报告和合同对话将从工作台删除。此操作无法撤销。"
-                  : "这次审查的结果、处理记录、报告和编辑稿将被删除。此操作无法撤销。"}</p>
-                {deleteError && <p className="error-text" role="alert">{deleteError}</p>}
+                <p className="quiet">{t(historyTarget.kind === "contract"
+                  ? t("合同原件、关联审查记录、报告和合同对话将从工作台删除。此操作无法撤销。")
+                  : t("这次审查的结果、处理记录、报告和编辑稿将被删除。此操作无法撤销。"))}</p>
+                {t(deleteError && <p className="error-text" role="alert">{t(deleteError)}</p>)}
                 <div className="delete-actions">
-                  <button className="secondary" autoFocus disabled={deleting} onClick={() => setModal("")}>取消</button>
+                  <button className="secondary" autoFocus disabled={deleting} onClick={() => setModal("")}>{t("取消")}</button>
                   <button className="primary danger" disabled={deleting} onClick={deleteSelectedHistory}>
-                    {deleting ? <LoaderCircle className="spin" size={15}/> : <Trash2 size={15}/>}
-                    {deleting ? "正在删除…" : "确认删除"}
+                    {t(deleting ? <LoaderCircle className="spin" size={15}/> : <Trash2 size={15}/>)}
+                    {t(deleting ? t("正在删除…") : t("确认删除"))}
                   </button>
                 </div>
               </>
-            )}
-            {modal === "company" && (
+            ))}
+            {t(modal === "company" && (
               <CompanyForm
                 value={selected?.company || ""}
                 onSave={async (company) => {
@@ -1376,8 +1365,8 @@ function App() {
                   }
                 }}
               />
-            )}
-            {modal === "skills" && (
+            ))}
+            {t(modal === "skills" && (
               <SkillForm
                 config={config}
                 skills={skills}
@@ -1388,19 +1377,19 @@ function App() {
                     body,
                   );
                   await refreshSkills();
-                  setNotice("Skill 已保存，可在输入框下方选择。");
+                  setNotice(t("Skill 已保存，可在输入框下方选择。"));
                   setModal("");
                 }}
               />
-            )}
-            {modal === "mail" && (
+            ))}
+            {t(modal === "mail" && (
               <>
                 <span className="eyebrow">MAIL INTEGRATION</span>
-                <h2>邮件处理</h2>
+                <h2>{t("邮件处理")}</h2>
+                <p>{t("收件邮箱 ·")} {config?.mailbox}</p>
+                <p>{config?.mail_demo ? t("当前为演示收发，完成邮箱连接后才会真实收发。") : t("真实邮箱收发已启用")}</p>
                 <p className="quiet">
-                  使用已注册邮箱发送合同。生成的提交凭据可让来件自动开始处理，有效期
-                  24 小时且仅使用一次。
-                </p>
+                  {config?.mail_auto_review ? t("每 60 秒检查新邮件，自动审阅已注册法务发送的合同并回邮风险报告，无需提交凭据。") : t("使用已注册邮箱发送合同。生成的提交凭据可让来件自动开始处理，有效期 24 小时且仅使用一次。")}</p>
                 <button
                   className="secondary"
                   onClick={async () => {
@@ -1411,12 +1400,11 @@ function App() {
                     }
                   }}
                 >
-                  生成邮件提交主题
-                </button>
-                {ticket && (
+                  {t("生成邮件提交主题")}</button>
+                {t(ticket && (
                   <div className="ticket">
                     <small>
-                      收件邮箱 · {ticket.mailbox || "尚未配置 Outlook"}
+                      {t("收件邮箱 ·")}{t(ticket.mailbox || t("尚未配置邮箱"))}
                     </small>
                     <code>{ticket.subject}</code>
                     <button
@@ -1424,18 +1412,16 @@ function App() {
                         navigator.clipboard.writeText(ticket.subject)
                       }
                     >
-                      <Copy size={14} /> 复制
-                    </button>
+                      <Copy size={14} /> {t("复制")}</button>
                   </div>
-                )}
-                {config?.demo && (
+                ))}
+                {t(config?.demo && config?.mail_demo && (
                   <>
-                    <h3>演示邮箱</h3>
+                    <h3>{t("演示邮箱")}</h3>
                     <p className="quiet">
-                      模拟已授权发件。结果保存到下面的本地发件箱。
-                    </p>
+                      {t("模拟已授权发件。结果保存到下面的本地发件箱。")}</p>
                     <input
-                      aria-label="模拟邮箱上传"
+                      aria-label={t("模拟邮箱上传")}
                       type="file"
                       accept=".pdf,.docx,.txt"
                       onChange={async (e) => {
@@ -1444,7 +1430,7 @@ function App() {
                         try {
                           const f = new FormData();
                           f.append("file", file);
-                          f.append("instruction", "标准合同审查");
+                          f.append("instruction", t("标准合同审查"));
                           const r = await api("/demo/mail", "POST", f);
                           await refreshContracts();
                           const list = await api<Contract[]>("/contracts");
@@ -1462,24 +1448,23 @@ function App() {
                         setLocalMails(await api("/mail/local"))
                       }
                     >
-                      刷新发件箱
-                    </button>
-                    {localMails.map((m) => (
+                      {t("刷新发件箱")}</button>
+                    {t(localMails.map((m) => (
                       <div className="mail-card" key={m.id}>
                         <strong>{m.subject}</strong>
-                        <p>{m.body.slice(0, 250)}</p>
-                        {m.file_id && (
-                          <a href={fileUrl(m.file_id, true)}>下载附件</a>
-                        )}
+                        <p>{t(m.body.slice(0, 250))}</p>
+                        {t(m.file_id && (
+                          <a href={fileUrl(m.file_id, true)}>{t("下载附件")}</a>
+                        ))}
                       </div>
-                    ))}
+                    )))}
                   </>
-                )}
+                ))}
               </>
-            )}
+            ))}
           </div>
         </dialog>
-      )}
+      ))}
     </div>
   );
 }
@@ -1515,7 +1500,7 @@ function LoginPage({
       if (register) {
         await api("/auth/register", "POST", { email, password, code });
         setRegister(false);
-        setInfo("注册成功，请登录。");
+        setInfo(t("注册成功，请登录。"));
       } else onLogin(await api("/auth/login", "POST", { email, password }));
     } catch (e: any) {
       setError(e.message);
@@ -1533,7 +1518,7 @@ function LoginPage({
         </div>
         <div className="entry-cover-title">
           <h1 id="entry-title" lang="en">Contract<br /> Review<span>.</span></h1>
-          <p>合同审查与证据核验</p>
+          <p>{t("合同审查与证据核验")}</p>
         </div>
         <div className="entry-cover-footer">
           <span>CSIT6000V</span>
@@ -1542,14 +1527,13 @@ function LoginPage({
       </section>
       <section className="entry-form-wrap" aria-labelledby="entry-form-title">
         <form className="entry-form" onSubmit={submit}>
-          <p className="entry-section-label" lang="en">{register ? "Registration" : "Workspace access"}</p>
-          <h2 id="entry-form-title">{register ? "创建法务账户" : "登录工作空间"}</h2>
+          <p className="entry-section-label" lang="en">{t(register ? "Registration" : "Workspace access")}</p>
+          <h2 id="entry-form-title">{t(register ? t("创建法务账户") : t("登录工作空间"))}</h2>
           <p className="entry-form-intro">
-            {register ? "使用邮箱验证码开通你的法务工作空间。" : "使用你的邮箱访问合同、审查清单与报告。"}
+            {t(register ? t("使用邮箱验证码开通你的法务工作空间。") : t("使用你的邮箱访问合同、审查清单与报告。"))}
           </p>
           <label>
-            邮箱
-            <input
+            {t("邮箱")}<input
               type="email"
               required
               value={email}
@@ -1559,20 +1543,19 @@ function LoginPage({
             />
           </label>
           <label>
-            密码
-            <input
+            {t("密码")}<input
               type="password"
               required
               minLength={register ? 10 : 1}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={register ? "new-password" : "current-password"}
-              placeholder={register ? "至少 10 个字符" : "输入密码"}
+              placeholder={register ? t("至少 10 个字符") : t("输入密码")}
             />
           </label>
-          {register && (
+          {t(register && (
             <div className="entry-code">
-              <label htmlFor="entry-code">邮箱验证码</label>
+              <label htmlFor="entry-code">{t("邮箱验证码")}</label>
               <div className="entry-code-line">
                 <input
                   id="entry-code"
@@ -1591,27 +1574,26 @@ function LoginPage({
                       const r = await api("/auth/send-code", "POST", { email });
                       setInfo(
                         r.demo_code
-                          ? "演示验证码：" + r.demo_code
-                          : "验证码已发送",
+                          ? t("演示验证码：") + r.demo_code
+                          : t("验证码已发送"),
                       );
                     } catch (e: any) {
                       setError(e.message);
                     }
                   }}
                 >
-                  发送验证码
-                </button>
+                  {t("发送验证码")}</button>
               </div>
             </div>
-          )}
-          {error && (
+          ))}
+          {t(error && (
             <div className="form-error" role="alert">
-              {error}
+              {t(error)}
             </div>
-          )}
-          {info && <div className="form-info" role="status">{info}</div>}
+          ))}
+          {t(info && <div className="form-info" role="status">{t(info)}</div>)}
           <button className="entry-submit" disabled={busy}>
-            {busy ? "请稍候…" : register ? "注册" : "登录"}
+            {t(busy ? t("请稍候…") : register ? t("注册") : t("登录"))}
             <ChevronRight size={17} />
           </button>
           <button
@@ -1623,16 +1605,16 @@ function LoginPage({
               setInfo("");
             }}
           >
-            {register ? "已有账户？返回登录" : "使用邮箱验证码注册"}
+            {t(register ? t("已有账户？返回登录") : t("使用邮箱验证码注册"))}
           </button>
-          {config?.demo && (
+          {t(config?.demo && (
             <div className="entry-demo">
-              <div className="entry-demo-title"><ShieldCheck size={15} aria-hidden="true" />本地演示账号</div>
+              <div className="entry-demo-title"><ShieldCheck size={15} aria-hidden="true" />{t("本地演示账号")}</div>
               <div className="entry-demo-options">
-                {[
-                  ["法务", "legal@example.com", "LegalDemo2026!"],
-                  ["另一法务", "other@example.com", "OtherDemo2026!"],
-                  ["总账户", "admin@example.com", "AdminDemo2026!"],
+                {t([
+                  [t("法务"), "legal@example.com", "LegalDemo2026!"],
+                  [t("另一法务"), "other@example.com", "OtherDemo2026!"],
+                  [t("总账户"), "admin@example.com", "AdminDemo2026!"],
                 ].map(([label, address, pass]) => (
                   <button
                     type="button"
@@ -1644,13 +1626,13 @@ function LoginPage({
                       setRegister(false);
                     }}
                   >
-                    {label}
+                    {t(label)}
                   </button>
-                ))}
+                )))}
               </div>
-              <small>本地演示发件箱 · {modelLabel(config.model_mode, config.model_name)}</small>
+              <small>{t("本地演示发件箱 ·")}{t(modelLabel(config.model_mode, config.model_name))}</small>
             </div>
-          )}
+          ))}
         </form>
       </section>
     </main>
@@ -1672,17 +1654,16 @@ function CompanyForm({
         onSave(name);
       }}
     >
-      <h2>合同归类</h2>
+      <h2>{t("合同归类")}</h2>
       <label>
-        公司或项目名称
-        <input
+        {t("公司或项目名称")}<input
           required
           maxLength={100}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <button className="primary">保存归类</button>
+      <button className="primary">{t("保存归类")}</button>
     </form>
   );
 }
@@ -1710,7 +1691,7 @@ function SkillForm({
   const standardCategories: { id: string; label: string }[] = config?.categories || [];
   const editingLegacySkill = skills.find((skill) => skill.id === id)?.categories?.includes("liquidated_damages");
   const categoryOptions = editingLegacySkill
-    ? [...standardCategories, { id: "liquidated_damages", label: "约定赔偿（旧版模板）" }]
+    ? [...standardCategories, { id: "liquidated_damages", label: t("约定赔偿（旧版模板）") }]
     : standardCategories;
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -1742,10 +1723,9 @@ function SkillForm({
   return (
     <form onSubmit={save}>
       <span className="eyebrow">REUSABLE REVIEW SKILLS</span>
-      <h2>我的审查模板</h2>
+      <h2>{t("我的审查模板")}</h2>
       <label>
-        编辑已有模板
-        <select
+        {t("编辑已有模板")}<select
           value={id}
           onChange={(e) => {
             setId(e.target.value);
@@ -1767,26 +1747,25 @@ function SkillForm({
             );
           }}
         >
-          <option value="">创建新 Skill</option>
-          {skills.map((s) => (
+          <option value="">{t("创建新 Skill")}</option>
+          {t(skills.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} · v{s.version}
             </option>
-          ))}
+          )))}
         </select>
       </label>
       <label>
-        模板名称
-        <input
+        {t("模板名称")}<input
           required
           maxLength={60}
-          placeholder="例如：供应商续约检查"
+          placeholder={t("例如：供应商续约检查")}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
       <div className="category-options">
-        {categoryOptions.map((c) => (
+        {t(categoryOptions.map((c) => (
           <label key={c.id}>
             <input
               type="checkbox"
@@ -1799,43 +1778,41 @@ function SkillForm({
                 )
               }
             />
-            {c.label}
+            {t(c.label)}
           </label>
-        ))}
+        )))}
       </div>
       <details>
-        <summary>自定义每类核对项</summary>
-        {categoryOptions
+        <summary>{t("自定义每类核对项")}</summary>
+        {t(categoryOptions
           .filter((item) => categories.includes(item.id))
           .map((item) => (
             <label key={item.id}>
-              {item.label}
+              {t(item.label)}
               <input
                 value={checks[item.id] || ""}
                 onChange={(event) =>
                   setChecks({ ...checks, [item.id]: event.target.value })
                 }
-                placeholder="用逗号分隔，留空使用默认核对项"
+                placeholder={t("用逗号分隔，留空使用默认核对项")}
                 maxLength={700}
               />
             </label>
-          ))}
+          )))}
       </details>
       <label>
-        模板 Prompt
-        <textarea
+        {t("模板 Prompt")}<textarea
           value={focus}
           onChange={(e) => setFocus(e.target.value)}
           maxLength={1500}
-          placeholder="例如：总结保密义务的主体、范围、例外和存续期。可单独使用，无需勾选内置类别。"
+          placeholder={t("例如：总结保密义务的主体、范围、例外和存续期。可单独使用，无需勾选内置类别。")}
         />
       </label>
       <div className="custom-items">
-        {customItems.map((item, index) => (
+        {t(customItems.map((item, index) => (
           <div key={index}>
             <label>
-              自定义项标题
-              <input
+              {t("自定义项标题")}<input
                 required
                 maxLength={80}
                 value={item.title}
@@ -1851,8 +1828,7 @@ function SkillForm({
               />
             </label>
             <label>
-              审查要求
-              <textarea
+              {t("审查要求")}<textarea
                 required
                 maxLength={1000}
                 value={item.question}
@@ -1874,10 +1850,9 @@ function SkillForm({
                 setCustomItems(customItems.filter((_, i) => i !== index))
               }
             >
-              移除此项
-            </button>
+              {t("移除此项")}</button>
           </div>
-        ))}
+        )))}
         <button
           className="secondary"
           type="button"
@@ -1886,29 +1861,24 @@ function SkillForm({
             setCustomItems([...customItems, { title: "", question: "" }])
           }
         >
-          <Plus size={14} /> 添加自定义审查项
-        </button>
+          <Plus size={14} /> {t("添加自定义审查项")}</button>
       </div>
       <label>
-        审计清单
-        <select value={policy} onChange={(e) => setPolicy(e.target.value)}>
+        {t("审计清单")}<select value={policy} onChange={(e) => setPolicy(e.target.value)}>
           <option value="supplier-demo@1">
-            供应商示例清单 v1 · 续约通知至少 30 个自然日
-          </option>
+            {t("供应商示例清单 v1 · 续约通知至少 30 个自然日")}</option>
           <option value="evidence-only@1">
-            证据提取清单 · 由人工判断符合性
-          </option>
+            {t("证据提取清单 · 由人工判断符合性")}</option>
         </select>
       </label>
-      {error && <p className="error-text">{error}</p>}
+      {t(error && <p className="error-text">{t(error)}</p>)}
       <button
         className="primary"
         disabled={!categories.length && !customItems.length && !focus.trim()}
       >
-        保存 Skill
-      </button>
+        {t("保存 Skill")}</button>
     </form>
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<><App /><LanguageSwitch /></>);

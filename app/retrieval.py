@@ -6,6 +6,9 @@ def vector_matches(paragraphs, skill, instruction, model):
     import faiss
     import numpy as np
 
+    if not paragraphs:
+        return {}
+
     definitions = custom_definitions(skill, instruction)
     categories, clarify = scope_plan(skill, instruction, model, definitions)
     if clarify or not categories:
@@ -23,13 +26,19 @@ def vector_matches(paragraphs, skill, instruction, model):
 
     queries = encode([". ".join(definitions[key][1]) for key in categories])
     index = faiss.IndexFlatIP(queries.shape[1])
-    batch_size = 32
-    for start in range(0, len(paragraphs), batch_size):
-        vectors = encode([p["text"] for p in paragraphs[start:start + batch_size]])
+    # Bound embedding input independently of the review model's context window.
+    # Every fragment maps back to the unchanged source paragraph for quotation checks.
+    fragments = [(p["id"], p["text"][offset:offset + 700])
+                 for p in paragraphs for offset in range(0, len(p["text"]), 600)]
+    if not fragments:
+        return {}
+    batch_size = 16
+    for start in range(0, len(fragments), batch_size):
+        vectors = encode([text for _, text in fragments[start:start + batch_size]])
         if vectors.shape[1] != index.d:
             raise ValueError("查询向量与合同段落向量的维度不一致。")
         index.add(vectors)
 
-    _, matches = index.search(queries, min(4, len(paragraphs)))
-    return {key: [paragraphs[i]["id"] for i in indexes if i >= 0]
+    _, matches = index.search(queries, min(16, len(fragments)))
+    return {key: list(dict.fromkeys(fragments[i][0] for i in indexes if i >= 0))[:4]
             for key, indexes in zip(categories, matches)}

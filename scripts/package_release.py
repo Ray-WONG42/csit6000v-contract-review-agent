@@ -4,10 +4,10 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-DIRECTORIES = {'app', 'prompts', 'scripts', 'tacc', 'tests', 'fixtures', 'evals', 'migrations', 'deploy', 'docs', 'web'}
+DIRECTORIES = {'app', 'prompts', 'scripts', 'tacc', 'tests', 'fixtures', 'evals', 'migrations', 'deploy', 'docs', 'web', 'templates'}
 FILES = {'README.md', 'LICENSE', 'NOTICE', 'AGENTS.md', '.gitignore', '.gitattributes', '.dockerignore', '.env.example',
          'requirements.txt', 'requirements-lock.txt', 'demo.py', 'run_agent.sh', 'prompt_loader.py',
-         'engine.py', 'mailbox.py', 'alembic.ini', 'pytest.ini', 'compose.yaml', 'Dockerfile',
+         'engine.py', 'mailbox.py', 'gmailbox.py', 'gmail_imap.py', 'alembic.ini', 'pytest.ini', 'compose.yaml', 'Dockerfile',
          'Setup.cmd', 'Start.cmd', 'Start-TACC.cmd', 'Stop-TACC.cmd', 'setup.ps1', 'start.ps1'}
 SKIP = {'node_modules', '__pycache__', '.pytest_cache', 'configurations', 'test-results', 'playwright-report',
         'data', 'uploads', 'outputs', 'logs', 'traces', 'memory', 'sessions', 'models', 'weights', '.cache', 'secrets'}

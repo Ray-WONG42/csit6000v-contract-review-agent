@@ -1,0 +1,12 @@
+{
+  "name": "付款期限审查",
+  "categories": [],
+  "checks": {},
+  "custom_items": [
+    {
+      "title": "付款期限",
+      "question": "提取付款期限、起算条件、责任主体与对应原文证据。"
+    }
+  ],
+  "policy": "evidence-only@1"
+}

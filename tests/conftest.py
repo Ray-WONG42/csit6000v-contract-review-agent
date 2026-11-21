@@ -7,6 +7,11 @@ TEST_DATA = tempfile.mkdtemp(prefix="contract-review-test-")
 os.environ["APP_DATA"] = TEST_DATA
 os.environ["APP_DEMO"] = "true"
 os.environ["MODEL_MODE"] = "demo"
+os.environ["TACC_PROTOCOL"] = "chat"
+os.environ["TACC_EXCLUDE_NODES"] = ""
+os.environ["MAIL_AUTO_REVIEW"] = "false"
+os.environ["MAIL_DEMO"] = "true"
+os.environ["GMAIL_HTTPS_PROXY"] = ""
 
 from app.main import app, rate_limits
 from app.db import Base, engine, initialize

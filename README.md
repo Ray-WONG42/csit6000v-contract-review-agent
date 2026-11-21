@@ -172,16 +172,42 @@ when the service is ready. `MODEL_MODE` sets the default backend for the menu.
 
 ### Hybrid contract retrieval
 
-In Ollama mode, contract reviews use BM25 and vector search by default. Run `ollama pull bge-m3:latest`
+In Ollama mode, contract reviews use BM25 and vector search by default. Run `ollama pull embeddinggemma:300m-qat-q4_0`
 to install the embedding model if it is missing. `OLLAMA_EMBEDDING_MODEL` and `OLLAMA_EMBEDDING_TIMEOUT`
 configure the embedding call to `OLLAMA_URL`. FAISS searches only the current contract. The report UI
 shows whether BM25, vector search, or both found each matching citation.
 If vector search is unavailable, the review continues with the other candidate sources and records the
 fallback in the job trace. Set `CONTRACT_VECTOR_SEARCH=0` to disable it, or set it to `1` to enable
-it with TACC. The TACC SDK path computes vectors on the application host and passes ranked paragraph IDs
+it with TACC or the independent API route. The TACC SDK path computes vectors on the application host and passes ranked paragraph IDs
 along with the review request. Demo mode runs offline.
 
+The default multilingual embedding model is about 239 MB; it is separate from the chat model.
+`python scripts/check_embeddings.py` verifies real local embeddings and Chinese-to-English retrieval
+without submitting a TACC job. Long paragraphs are embedded as overlapping fragments while retaining
+their original paragraph IDs for quotation verification. No persistent vector database is required.
+
+中文：先执行 `ollama pull embeddinggemma:300m-qat-q4_0`，再在本机 `.env` 设置
+`CONTRACT_VECTOR_SEARCH=1`。执行 `python scripts/check_embeddings.py` 验证向量和跨语言检索。
+向量在本机生成，切换 DeepSeek / TACC 不需要更换嵌入模型；未下载模型时会明确记录回退。
+
 ### Required course path: activate real TACC
+
+`TACC_SDK_READ_TIMEOUT=60` controls each SDK status/log read (minimum 30 seconds).
+WSL plus the course SSH gateway can take over 15 seconds even for a healthy status request;
+this budget is separate from the model inference timeout. Read retries never resubmit jobs.
+If a service fails because its allocated GPU has insufficient free memory, the error is shown
+explicitly and automatic requests stop until the service is restarted. An optional
+`TACC_EXCLUDE_NODES=node-a,node-b` applies to both automatic and command-line service starts;
+use only nodes that you have verified are unsuitable. Remove an exclusion when it is no longer needed.
+
+If a review's candidate paragraphs exceed the configured request budget, the engine recursively
+reviews smaller groups, validates each group's quotations against the paragraphs it actually read,
+then merges the evidence. It never silently truncates the candidates. A single paragraph or request
+metadata that still cannot fit is reported explicitly; this does not increase the course context limit.
+
+中文：SDK 状态查询与模型推理使用不同超时配置。若服务因显存不足退出，先核对日志、按需设置
+`TACC_EXCLUDE_NODES`，再运行 `Start-TACC.cmd`；不要反复创建相同请求。已有作业提交结果不确定时，
+先核对自己的作业并使用 `scripts/tacc_service.py adopt 作业编号` 接回，不要重复提交。
 
 The repository does not supply a TACC account, SDK private key or course environment installer.
 First follow the teaching team's SDK/authentication instructions using **your own** account.
@@ -207,7 +233,9 @@ TACC_MODEL=qwen3.8-27b
 ```
 
 `APP_DEMO=1` keeps the synthetic local login/mail sandbox while model inference is real.
-Leave `TACC_URL`, `LLM_BASE_URL` and keys blank in SDK mode. The service address is discovered from the job log.
+Leave `TACC_URL` blank for automatic SDK service discovery from the job log. The separate
+`LLM_BASE_URL`, `LLM_API_KEY` and `MODEL_NAME` may remain configured for the independent API menu entry;
+they do not replace the TACC SDK route.
 The workbench can queue the service when a TACC request arrives. Use the commands below for manual
 startup and connection diagnostics.
 
@@ -355,3 +383,17 @@ Third-party packages keep their original licenses. Refer to the [official tcloud
 for SDK prerequisites; no SDK account or private key is distributed here.
 
 中文：经维护者确认，自有代码采用 MIT；课程补丁允许公开，保留来源说明，不擅自将上游代码改授 MIT。
+
+## Gmail and bilingual workbench / Gmail 与双语工作台
+
+The language selector controls the interface, built-in request templates and the requested output language for new chats/reports. Source quotations remain unchanged. Download sample files next to the selector or edit `templates/en` and `templates/zh`.
+
+Gmail supports IMAP/SMTP with an application password (`GMAIL_TRANSPORT=imap`, no Cloud project), or optional OAuth. Keep `MAIL_DEMO=1` until `scripts/check_mail.py` passes. With `MAIL_AUTO_REVIEW=1`, registered senders get automatic standard reviews and report replies, with inbox polling every 60 seconds. Normal mailbox login passwords are not used. See [Gmail and language setup](docs/GMAIL_AND_LANGUAGES.md) for Desktop OAuth setup and verification.
+
+右下角可切换中英文，并下载对应语言的预置文件；新聊天和报告按所选语言生成，引用保留原文。Gmail 支持 OAuth HTTPS API，或 IMAP/SMTP 应用专用密码，不保存普通登录密码；详细配置及验收步骤见上方文档。
+
+### Independent model selections / 独立模型选项
+
+Use `MODEL_MODE=api` with `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_NAME` for DeepSeek or another compatible API. Keep the course route separately configured with `TACC_PROTOCOL=sdk`, `TACC_MODEL=qwen3.8-27b`. The selector shows independent API and Qwen TACC entries; local Ollama models appear when installed. Selecting API never submits a TACC job. Only explicitly selecting Qwen TACC requests the course backend.
+
+DeepSeek 使用独立的 api 模式和 LLM 配置；TACC 使用独立 SDK 配置。前端可分别选择，互不覆盖。显示 TACC 选项不代表已完成课程服务连接验收。

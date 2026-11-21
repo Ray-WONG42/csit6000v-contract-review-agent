@@ -1,0 +1,1 @@
+Return one strictly valid JSON object only. Escape quotes and newlines inside strings. Close every object and array. Do not add Markdown fences. Follow the existing tool schema exactly.

@@ -485,12 +485,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/templates/{language}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Builtin Template */
+        get: operations["builtin_template_api_templates__language___name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** AssistantInput */
         AssistantInput: {
+            /**
+             * Language
+             * @default zh
+             * @enum {string}
+             */
+            language: "zh" | "en";
             /** Request Key */
             request_key: string;
             /** Message */
@@ -512,7 +535,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            model_mode: "" | "ollama" | "tacc";
+            model_mode: "" | "ollama" | "tacc" | "api";
             /**
              * Ollama Model
              * @default
@@ -581,6 +604,12 @@ export interface components {
         };
         /** EmailInput */
         EmailInput: {
+            /**
+             * Language
+             * @default zh
+             * @enum {string}
+             */
+            language: "zh" | "en";
             /** Email */
             email: string;
         };
@@ -616,6 +645,12 @@ export interface components {
         /** JobInput */
         JobInput: {
             /**
+             * Language
+             * @default zh
+             * @enum {string}
+             */
+            language: "zh" | "en";
+            /**
              * Instruction
              * @default
              */
@@ -637,7 +672,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            model_mode: "" | "ollama" | "tacc";
+            model_mode: "" | "ollama" | "tacc" | "api";
             /**
              * Ollama Model
              * @default
@@ -686,6 +721,12 @@ export interface components {
         };
         /** LoginInput */
         LoginInput: {
+            /**
+             * Language
+             * @default zh
+             * @enum {string}
+             */
+            language: "zh" | "en";
             /** Email */
             email: string;
             /** Password */
@@ -693,6 +734,12 @@ export interface components {
         };
         /** RegisterInput */
         RegisterInput: {
+            /**
+             * Language
+             * @default zh
+             * @enum {string}
+             */
+            language: "zh" | "en";
             /** Email */
             email: string;
             /** Password */
@@ -1766,6 +1813,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    builtin_template_api_templates__language___name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                language: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -121,6 +121,13 @@ def run_job(job_id, claim):
             model.calls = checkpoint("model_calls") or []
             model.save_calls = lambda calls: checkpoint("model_calls", calls)
             result = review(paragraphs, skill, job.instruction, model, checkpoint=checkpoint, vector_hits=vector_hits)
+        result["language"] = skill.get("language", "zh")
+        if result["language"] == "en":
+            from .localization import text_for
+            for row in result.get("rows", []):
+                for field in ("label", "assessment", "explanation"):
+                    row[field] = text_for(row.get(field, ""), "en")
+            result["answer"] = "\n\n".join(row["label"] + ": " + (row.get("finding") or ("No supporting source found." if row["status"] == "not_found" else "Human review required.")) for row in result.get("rows", []))
         result["seconds"] = round(time.perf_counter() - started, 3)
         report = report_text(contract.name, result) if result["rows"] else ""
         event("render", "保存审查结果", "")
@@ -131,7 +138,7 @@ def run_job(job_id, claim):
                 raise RuntimeError("任务已被重新领取")
             if raw:
                 artifact = write_file(db, job.owner_id, job.contract_id,
-                                      contract.name.rsplit(".", 1)[0] + "-审查报告.docx", raw, "report", job_id)
+                                      contract.name.rsplit(".", 1)[0] + ("-review-report.docx" if result.get("language") == "en" else "-审查报告.docx"), raw, "report", job_id)
                 current.report_file = artifact.id
             current.report, current.result = report, dump(result)
             current.state = "completed" if result["state"] == "complete" else result["state"]
@@ -167,16 +174,16 @@ def run_job(job_id, claim):
 
 
 def receive_message(client, message):
-    message_id = settings.graph_mailbox + ":" + message["id"]
+    message_id = settings.mailbox + ":" + message["id"]
     receipt_id = digest(message_id)
     with session() as db:
         if db.get(Receipt, receipt_id):
             return
     sender = message.get("from", {}).get("emailAddress", {}).get("address", "").lower()
-    if sender == settings.graph_mailbox.lower():
+    if sender == settings.mailbox.lower():
         return
     subject = message.get("subject", "")
-    if subject.startswith("合同审查结果"):
+    if subject.startswith(("合同审查结果", "Contract review result")):
         return
     with session() as db:
         user = db.scalar(select(User).where(User.email == sender, User.role == "legal"))
@@ -193,13 +200,17 @@ def receive_message(client, message):
             return
         token_match = re.search(r"\[TOKEN=([A-Za-z0-9_-]+)\]", subject)
         ticket = db.get(Ticket, digest(token_match[1])) if token_match else None
-        authorized = bool(ticket and ticket.owner_id == user.id and ticket.expires > time.time() and not ticket.used)
+        ticket_valid = bool(ticket and ticket.owner_id == user.id and ticket.expires > time.time() and not ticket.used)
+        authorized = settings.mail_auto_review or ticket_valid
         _, name, raw = attachments[0]
         contract = ingest(db, user, name, raw, "邮件导入")
-        request = str(message.get("body", {}).get("content", ""))[:4000]
-        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id),
+        request = "标准合同审查" if settings.mail_auto_review else str(message.get("body", {}).get("content", ""))[:4000]
+        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id, language="en" if "[LANG=en]" in subject else "zh"),
                          "email", "queued" if authorized else "awaiting_confirmation")
-        if authorized:
+        snapshot = json.loads(job.skill)
+        snapshot["mail_message_id"] = str(message.get("internetMessageId", ""))[:500]
+        job.skill = dump(snapshot)
+        if ticket_valid:
             ticket.used = 1
         db.add(Receipt(id=receipt_id, state="accepted", job_id=job.id))
     client.mark_read(message["id"])
@@ -208,11 +219,12 @@ def receive_message(client, message):
 def mail_loop(stop):
     client = graph_client()
     while not stop.is_set():
+        cycle_started = time.monotonic()
         try:
             remove_deleted_files()
-            if not settings.app_demo and client.enabled:
+            if not settings.demo_mail and client.enabled:
                 with session() as db:
-                    record = db.get(MailCursor, settings.graph_mailbox)
+                    record = db.get(MailCursor, settings.mailbox)
                     cursor = record.cursor if record else ""
                 for _ in range(12):
                     batch = client.delta(cursor)
@@ -221,19 +233,19 @@ def mail_loop(stop):
                             receive_message(client, message)
                     cursor = batch.get("@odata.nextLink") or batch.get("@odata.deltaLink")
                     if not cursor:
-                        raise RuntimeError("Outlook 增量响应缺少游标")
+                        raise RuntimeError("邮箱响应缺少游标")
                     with session() as db:
-                        record = db.get(MailCursor, settings.graph_mailbox)
+                        record = db.get(MailCursor, settings.mailbox)
                         if record:
                             record.cursor = cursor
                         else:
-                            db.add(MailCursor(mailbox=settings.graph_mailbox, cursor=cursor))
+                            db.add(MailCursor(mailbox=settings.mailbox, cursor=cursor))
                     if "@odata.nextLink" not in batch:
                         break
             deliver_pending()
         except Exception as exc:
             print("mail service:", type(exc).__name__, flush=True)
-        stop.wait(max(2, settings.graph_poll))
+        stop.wait(max(0, max(10, settings.mail_poll_seconds) - (time.monotonic() - cycle_started)))
 
 
 def main():

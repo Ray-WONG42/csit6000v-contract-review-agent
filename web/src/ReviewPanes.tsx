@@ -1,3 +1,4 @@
+import { t, useLanguage, LanguageSwitch } from "./i18n";
 import { useState, type ReactNode } from "react";
 import { FileCheck2, Files } from "lucide-react";
 
@@ -6,15 +7,13 @@ export default function ReviewPanes({ children }: { children: ReactNode }) {
 
   return (
     <div className="review-layout">
-      <div className="review-switch" role="group" aria-label="合同工作区视图">
+      <div className="review-switch" role="group" aria-label={t("合同工作区视图")}>
         <button aria-pressed={pane === "review"} onClick={() => setPane("review")}>
-          <FileCheck2 size={16} /> 审查工作区
-        </button>
+          <FileCheck2 size={16} /> {t("审查工作区")}</button>
         <button aria-pressed={pane === "papers"} onClick={() => setPane("papers")}>
-          <Files size={16} /> 审查底稿
-        </button>
+          <Files size={16} /> {t("审查底稿")}</button>
       </div>
-      <div className="panels" data-pane={pane}>{children}</div>
+      <div className="panels" data-pane={pane}>{t(children)}</div>
     </div>
   );
 }

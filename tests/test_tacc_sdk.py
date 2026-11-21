@@ -106,3 +106,37 @@ def test_uncertain_gpu_submission_is_not_repeated(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="提交结果不确定"):
         tacc_sdk.queued_service_base(None)
     assert len(submissions) == 1
+
+
+def test_status_read_has_time_for_course_gateway(monkeypatch):
+    captured = {}
+    def read(args, **kwargs):
+        captured.update(kwargs)
+        return '30427 tacc clause-qwen-serve user R'
+    monkeypatch.setattr(tacc_sdk, 'sdk', read)
+    monkeypatch.setattr(tacc_sdk.settings, 'tacc_sdk_read_timeout', 60)
+    assert tacc_sdk.service_job_active('30427')
+    assert captured['timeout'] == 60
+
+
+def test_failed_gpu_service_reports_memory_and_does_not_resubmit(monkeypatch, tmp_path):
+    monkeypatch.setattr(tacc_sdk.settings, 'app_data', str(tmp_path))
+    monkeypatch.setattr(tacc_sdk.settings, 'tacc_url', '')
+    monkeypatch.setattr(tacc_sdk, 'service_log', lambda _: 'CLAUSE_STARTUP_FAILURE: insufficient free memory on an allocated GPU')
+    status = tacc_sdk.inspect_service('123')
+    assert status['state'] == 'failed' and '显存不足' in status['error']
+    tacc_sdk.save_service({'job_id': '123', **status})
+    monkeypatch.setattr(tacc_sdk, 'submit', lambda *_: pytest.fail('Resubmitted failed GPU service'))
+    with pytest.raises(tacc_sdk.TaccServiceError, match='显存不足'):
+        tacc_sdk.queued_service_base(None)
+
+
+def test_automatic_service_honors_node_exclusion(monkeypatch, tmp_path):
+    monkeypatch.setattr(tacc_sdk.settings, 'app_data', str(tmp_path))
+    monkeypatch.setattr(tacc_sdk.settings, 'tacc_exclude_nodes', 'busy-node')
+    def submit(cwd):
+        assert '    - exclude=busy-node' in (cwd / 'tuxiv.conf').read_text()
+        assert (cwd / 'job.sh').exists() and (cwd / 'service_supervisor.py').exists()
+        return '123'
+    monkeypatch.setattr(tacc_sdk, 'submit', submit)
+    assert tacc_sdk._submit_service({})['job_id'] == '123'

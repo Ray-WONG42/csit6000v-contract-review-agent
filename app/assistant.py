@@ -143,7 +143,7 @@ def run_tool(name, arguments, user, run_id, step, request):
         if name == "review_contract":
             db.execute(text("BEGIN IMMEDIATE"))
             job = create_job(db, user, args.contract_id, JobInput(instruction=args.instruction,
-                             skill_id=args.skill_id, request_key=f"agent-{run_id}-{step}",
+                             skill_id=args.skill_id, language=request.get("language", "zh"), request_key=f"agent-{run_id}-{step}",
                              model_mode=request.get("model_mode", ""),
                              ollama_model=request.get("ollama_model", "")),
                              model_snapshot=request.get("model_snapshot"))
@@ -184,6 +184,10 @@ def collect_sources(observation, sources):
 
 def direct_demo(request):
     message = request["message"].strip()
+    for english, chinese in (("/search ", "/搜索 "), ("/read ", "/读取 "), ("/create-skill ", "/创建Skill "), ("/document ", "/生成文档 ")):
+        if message.startswith(english):
+            message = chinese + message[len(english):]
+            break
     if message.startswith("/搜索 "):
         return {"tool": "web_search", "arguments": {"query": message[4:].strip()}}
     if message.startswith("/读取 "):
@@ -205,6 +209,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
     available = {key: {"description": DESCRIPTIONS[key], "arguments_schema": model.model_json_schema()}
                  for key, model in TOOL_ARGS.items() if key in settings.agent_tools.split(",") and (request.get("allow_web", True) or key not in ("web_search", "read_webpage"))}
     system = "\n\n".join(load_prompt(name) for name in ("assistant_system", "tool", "reflection"))
+    system += "\n" + load_prompt("output_en" if request.get("language") == "en" else "output_zh")
     observations = checkpoint("observations") or []
     sources, artifacts, reviews = [], [], []
     snapshot = request.get("model_snapshot")
@@ -217,6 +222,8 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
     if model.mode == "ollama" and request.get("ollama_model"):
         model.require_local_ollama_model()
     model_info = {"mode": model.mode}
+    if model.mode == "api":
+        model_info["model_name"] = settings.model_name
     if model.mode == "ollama":
         model_info["model_name"] = model.ollama_model
     demo = model.mode == "demo"
@@ -283,7 +290,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
                            for item in observations if isinstance(item["result"], dict))
         observations.append({"tool": name, "arguments": arguments, "result": result})
         checkpoint("observations", observations)
-        if result.get("error") and prior_errors >= 1:
+        if isinstance(result, dict) and result.get("error") and prior_errors >= 1:
             return {"answer": f"工具 {name} 连续两次执行失败，已停止重试。原因：{result['error']}。本次操作尚未完成。",
                     "sources": sources, "artifacts": artifacts, "reviews": reviews, **model_info}
         collect_sources(result, sources)

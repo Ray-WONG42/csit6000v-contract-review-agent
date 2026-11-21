@@ -4,6 +4,7 @@ from engine import LEGACY_RULES, RULES
 
 
 class EmailInput(BaseModel):
+    language: Literal["zh", "en"] = "zh"
     email: str = Field(max_length=254)
 
     @field_validator("email")
@@ -72,11 +73,12 @@ class SkillInput(BaseModel):
 
 
 class JobInput(BaseModel):
+    language: Literal["zh", "en"] = "zh"
     instruction: str = Field(default="", max_length=4000)
     skill_id: str = Field(default="", max_length=64)
     parent_id: str = Field(default="", max_length=64)
     request_key: str = Field(min_length=8, max_length=100)
-    model_mode: Literal["", "ollama", "tacc"] = ""
+    model_mode: Literal["", "ollama", "tacc", "api"] = ""
     ollama_model: str = Field(default="", max_length=255)
 
 
@@ -160,12 +162,13 @@ class ChatMessage(BaseModel):
 
 
 class AssistantInput(BaseModel):
+    language: Literal["zh", "en"] = "zh"
     request_key: str = Field(min_length=8, max_length=100)
     message: str = Field(min_length=1, max_length=6000)
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
     contract_id: str = Field(default="", max_length=64)
     allow_web: bool = True
-    model_mode: Literal["", "ollama", "tacc"] = ""
+    model_mode: Literal["", "ollama", "tacc", "api"] = ""
     ollama_model: str = Field(default="", max_length=255)
 
     @model_validator(mode="after")

@@ -8,6 +8,7 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 from prompt_loader import load_prompt
 from collections import Counter
@@ -41,7 +42,7 @@ AGREEMENT_DATE_EVIDENCE = re.compile(
 )
 TASK_STAGES = {"found", "not_found", "review"}
 WORD = re.compile(r"[a-z0-9]+", re.I)
-STANDARD_REQUESTS = {"", "标准审查", "标准合同审查", "进行标准合同审查", "请按所选清单审查这份合同",
+STANDARD_REQUESTS = {"review this contract using the selected checklist", "run standard contract review","", "标准审查", "标准合同审查", "进行标准合同审查", "请按所选清单审查这份合同",
                      "标准合同审查报告", "全面审查", "全面审查合同", "full review", "standard review"}
 MAX_FILE = 12 * 1024 * 1024
 DEFAULT_SKILL = {"name": "标准合同审查", "categories": list(RULES), "checks": {}, "focus": ""}
@@ -179,6 +180,10 @@ def scope_plan(skill, instruction, model, definitions):
     return (categories if skill.get("explicit") else []) + custom + ["custom_question"], ""
 
 
+class ContextBudgetExceeded(ValueError):
+    """The full request cannot fit; callers may split source paragraphs safely."""
+
+
 class Model:
     def __init__(self, event, mode=None, ollama_model=None):
         self.event = event
@@ -204,6 +209,7 @@ class Model:
         source += '|' + load_prompt('survey') + '|' + load_prompt('contract_system')
         source += '|' + str(getattr(settings, 'llm_base_url', '')) + '|' + str(getattr(settings, 'model_name', ''))
         source += '|' + str(getattr(settings, 'llm_temperature', 0)) + '|' + str(settings.tacc_max_output_tokens)
+        source += '|' + str(getattr(settings, 'llm_context_limit', '')) + '|' + str(getattr(settings, 'llm_max_output_tokens', ''))
         return hashlib.sha256(source.encode()).hexdigest()
 
     @staticmethod
@@ -294,39 +300,47 @@ class Model:
     def call(self, system, payload, phase):
         from app.config import settings
         start = time.perf_counter()
+        if getattr(self, "output_language", "zh") == "en":
+            system += "\n" + load_prompt("output_en")
         usage = {}
         error = ""
         try:
             if self.mode == "ollama":
                 content, usage = self._ollama_response(settings, system, payload, phase)
                 return self._parse_json(content)
-            if self.mode != "tacc":
+            if self.mode not in ("tacc", "api"):
                 raise RuntimeError("当前没有启用真实 TACC 模型。")
-            url = settings.tacc_url
+            api = self.mode == "api"
+            context_limit = settings.llm_context_limit if api else settings.tacc_context_limit
+            max_output = settings.llm_max_output_tokens if api else settings.tacc_max_output_tokens
+            timeout = settings.llm_timeout if api else settings.tacc_timeout
+            url = "" if api else settings.tacc_url
             if not url and getattr(settings, 'llm_base_url', ''):
                 base = settings.llm_base_url.rstrip('/')
                 url = base if base.endswith('/chat/completions') else base + '/chat/completions'
-            model_name = settings.tacc_model or getattr(settings, 'model_name', '')
+            model_name = settings.model_name if api else settings.tacc_model or getattr(settings, 'model_name', '')
             if not url or not model_name:
                 raise RuntimeError("请配置 TACC_URL 和 TACC_MODEL。")
-            body = {"model": model_name, "temperature": getattr(settings, 'llm_temperature', 0), "max_tokens": settings.tacc_max_output_tokens,
+            body = {"model": model_name, "temperature": getattr(settings, 'llm_temperature', 0), "max_tokens": max_output,
                     "messages": [{"role": "system", "content": system},
                                  {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]}
             # Conservative UTF-8 byte bound; never silently truncate the contract.
-            if len(json.dumps(body, ensure_ascii=False).encode()) + settings.tacc_max_output_tokens > settings.tacc_context_limit:
-                raise ValueError("请求超出配置的保守上下文预算，请调小分块或确认课程上下文上限。")
+            if len(json.dumps(body, ensure_ascii=False).encode()) + max_output > context_limit:
+                raise ContextBudgetExceeded("请求超出配置的保守上下文预算，请调小分块或确认课程上下文上限。")
             if settings.tacc_json_mode:
                 body["response_format"] = {"type": "json_object"}
-            if getattr(settings, "tacc_disable_thinking", False):
+            if urlsplit(url).hostname == "api.deepseek.com":
+                body["thinking"] = {"type": "disabled"}
+            elif getattr(settings, "tacc_disable_thinking", False):
                 body["chat_template_kwargs"] = {"enable_thinking": False}
             headers = {"Content-Type": "application/json"}
-            if key := (settings.tacc_api_key or getattr(settings, 'llm_api_key', '')):
+            if key := (settings.llm_api_key if api else settings.tacc_api_key or getattr(settings, 'llm_api_key', '')):
                 headers["Authorization"] = f"Bearer {key}"
-            self.event("model", "调用 TACC 模型", phase)
+            self.event("model", "调用 DeepSeek API" if urlsplit(url).hostname == "api.deepseek.com" else "调用 TACC 模型", phase)
             request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
-            with urllib.request.urlopen(request, timeout=settings.tacc_timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 data = json.load(response)
-            if settings.tacc_protocol == "queue":
+            if not api and settings.tacc_protocol == "queue":
                 if not settings.tacc_poll_url or "{job_id}" not in settings.tacc_poll_url:
                     raise ValueError("队列模式需要包含 {job_id} 的 TACC_POLL_URL。")
                 from urllib.parse import quote
@@ -344,7 +358,17 @@ class Model:
                     raise RuntimeError("TACC 队列任务失败")
                 data = data["result"]
             usage = data.get("usage") or {}
-            return self._parse_json(data["choices"][0]["message"]["content"])
+            try:
+                return self._parse_json(data["choices"][0]["message"]["content"])
+            except json.JSONDecodeError:
+                if getattr(self, "_retry_json", False):
+                    raise ValueError("模型连续两次返回无效 JSON，请重新发送。")
+                self._retry_json = True
+                try:
+                    self.event("retry", "模型格式有误，重新生成一次", phase)
+                    return self.call(system + "\n" + load_prompt("json_retry"), payload, phase)
+                finally:
+                    self._retry_json = False
         except Exception as exc:
             error = type(exc).__name__
             raise
@@ -373,7 +397,39 @@ def model_rows(model, categories, skill, instruction, paragraphs, phase, evaluat
         payload["evaluation_scope"] = "Termination is termination for convenience; automatic renewal requires explicit automatic extension."
     if overview:
         payload["navigation_only"] = overview
-    response = model.call(SYSTEM, payload, phase)
+    try:
+        response = model.call(SYSTEM, payload, phase)
+    except ContextBudgetExceeded:
+        if len(paragraphs) < 2:
+            raise  # Metadata or a single source paragraph still cannot fit: report it explicitly.
+        midpoint = len(paragraphs) // 2
+        chunks = (paragraphs[:midpoint], paragraphs[midpoint:])
+        model.event("chunk", "候选段落超出预算，分批审阅并合并证据", str(len(paragraphs)))
+        pieces = [model_rows(model, categories, skill, instruction, chunk, phase,
+                             evaluation, overview, definitions) for chunk in chunks]
+        merged = {}
+        for key in categories:
+            rows = []
+            for piece, chunk in zip(pieces, chunks):
+                row = piece.get(key)
+                if not isinstance(row, dict) or row.get("status") == "needs_context":
+                    rows = []
+                    break
+                rows.append(validate(key, row, chunk, definitions))
+            if not rows:
+                merged[key] = {"category": key, "status": "needs_context", "evidence": []}
+                continue
+            evidence = list({(e["paragraph_id"], e["quote"]): e
+                             for row in rows for e in row["evidence"]}.values())
+            if len(evidence) > 5:
+                merged[key] = {"category": key, "status": "needs_context", "evidence": []}
+                continue  # Never drop evidence silently to fit the report schema.
+            merged[key] = {"category": key, "status": "found" if evidence else "not_found",
+                           "evidence": evidence,
+                           "finding": "；".join(dict.fromkeys(r["finding"] for r in rows if r.get("finding"))),
+                           "missing": list(dict.fromkeys(m for r in rows for m in r.get("missing", []))),
+                           "question": "；".join(dict.fromkeys(r["question"] for r in rows if r.get("question")))}
+        return merged
     if not isinstance(response, dict) or not isinstance(response.get("rows"), list):
         raise ValueError("结构化响应缺少 rows。")
     rows = {}
@@ -543,6 +599,7 @@ def annotate(row, skill, definitions=None):
 def review(paragraphs, skill, instruction, model, method="retrieval", evaluation=False, checkpoint=None,
            vector_hits=None):
     started = time.perf_counter()
+    model.output_language = skill.get("language", "zh")
     event = model.event
     definitions = custom_definitions(skill, instruction)
     categories, clarify = scope_plan(skill, instruction, model, definitions)
@@ -566,7 +623,7 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
         # Batch normal built-in categories while keeping candidate budgets and
         # quotation validation separate for each category.
         # A failed/missing row falls through to the existing isolated retry path.
-        batched_tacc = model.mode == "tacc" and method == "retrieval"
+        batched_tacc = model.mode in ("tacc", "api") and method == "retrieval"
         cached = checkpoint("survey") if checkpoint and method == "retrieval" and not batched_tacc else None
         if cached and cached.get("signature") == model.signature and not any(k.startswith("custom_") for k in categories) and all(key in cached["hints"] for key in categories):
             hints, survey_partial = cached["hints"], cached["partial"]
@@ -583,6 +640,12 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
         vector_hits = vector_hits or {}
 
         def candidates_for(key, keyword_limit, fallback_limit, limit):
+            # Specific questions over short contracts use complete source coverage.
+            from app.config import settings
+            budget = settings.ollama_context_limit if model.mode == "ollama" else settings.llm_context_limit if model.mode == "api" else settings.tacc_context_limit
+            if key == "custom_question" and not vector_hits and len(json.dumps(paragraphs, ensure_ascii=False).encode()) < min(12000, budget // 2):
+                event("retrieve", "本次问题读取完整短合同", str(len(paragraphs)) + " paragraphs")
+                return {i: [] for i in range(len(paragraphs))}
             keyword = retrieval.search(key, keyword_limit, definitions[key])
             vector = [by_id[pid] for pid in vector_hits.get(key, []) if pid in by_id]
             survey = [by_id[pid] for pid in hints.get(key, []) if pid in by_id]
@@ -609,7 +672,7 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
         batch_categories = [key for key in categories
                             if not key.startswith("custom_")
                             and not (checkpoint and checkpoint("category:" + key))]
-        if batch_categories and model.mode == "tacc":
+        if batch_categories and model.mode in ("tacc", "api"):
             for key in batch_categories:
                 batch_indexes[key] = candidates_for(key, 3, 2, 4)
             # Bound output size so a batch fits the model timeout and token budget.
@@ -681,19 +744,25 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             answer.append(row["label"] + "：" + ("未检出支持原文。" if row["status"] == "not_found" else "需要人工复核。"))
     result = {"state": state, "rows": results, "calls": model.calls, "answer": "\n\n".join(answer),
               "seconds": round(time.perf_counter() - started, 3), "model_mode": model.mode}
+    result["language"] = skill.get("language", "zh")
+    if model.mode == "api":
+        from app.config import settings
+        result["model_name"] = settings.model_name
     if model.mode == "ollama":
         result["model_name"] = model.ollama_model
     return result
 
 
 def report_text(name, result):
-    mode = {"tacc": "TACC", "ollama": "本地 Ollama", "demo": "本地规则演示"}.get(
+    from app.localization import text_for
+    tr = lambda value: text_for(value, result.get("language", "zh"))
+    mode = {"tacc": "TACC", "api": "API", "ollama": "本地 Ollama", "demo": "本地规则演示"}.get(
         result.get("model_mode"), "本地规则演示")
     if result.get("model_name"):
         mode += " · " + result["model_name"]
     lines = ["# 合同审查报告", "", f"审查对象：{name}", "",
              "本报告供人工复核。未找到对应原文表示本次未检出。",
-             f"执行模式：{mode}", ""]
+             f"执行模式：{tr(mode)}", ""]
     for row in result["rows"]:
         state = {"found": "找到证据", "not_found": "未找到对应原文", "review": "待人工复核"}[row["status"]]
         lines.extend([f"## {row['label']}", state])
@@ -708,10 +777,18 @@ def report_text(name, result):
         if row["question"]:
             lines.append("建议问题：" + row["question"])
         lines.append("")
+    if result.get("language") == "en":
+        lines = [tr(line) for line in lines]
+        lines = [line.replace("# 合同审查报告", "# Contract Review Report").replace("审查对象：", "Contract: ").replace("执行模式：", "Execution mode: ").replace("## ", "## ").replace("清单判断：", "Assessment: ").replace("待核对：", "To verify: ").replace("建议问题：", "Suggested question: ").replace("核对项 · ", "Checklist item · ") for line in lines]
+        for index, line in enumerate(lines):
+            if line.startswith("## "): lines[index] = "## " + tr(line[3:])
+            elif line.startswith("Assessment: "): lines[index] = "Assessment: " + tr(line[len("Assessment: "):])
     return "\n".join(lines)
 
 
 def docx_report(content, result=None):
+    from app.localization import text_for
+    tr = lambda value: text_for(value, (result or {}).get("language", "zh"))
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
     from docx.oxml import OxmlElement
@@ -723,12 +800,12 @@ def docx_report(content, result=None):
     doc.sections[0].top_margin = Inches(.7)
     doc.sections[0].bottom_margin = Inches(.7)
     if result:
-        doc.add_heading("合同风险表", 0)
-        doc.add_paragraph("按所选审计清单核对。后附原文引用与待核验项。")
+        doc.add_heading(tr("合同风险表"), 0)
+        doc.add_paragraph(tr("按所选审计清单核对。后附原文引用与待核验项。"))
         table = doc.add_table(rows=1, cols=4)
         table.style = "Light Shading Accent 1"
         for cell, value in zip(table.rows[0].cells, ["类别", "提取状态", "清单判断", "段落证据"]):
-            cell.text = value
+            cell.text = tr(value)
         header = OxmlElement("w:tblHeader")
         table.rows[0]._tr.get_or_add_trPr().append(header)
         for row in result["rows"]:
@@ -736,7 +813,7 @@ def docx_report(content, result=None):
             values = [row["label"], {"found": "已定位", "not_found": "未检出", "review": "待复核"}[row["status"]],
                       row.get("assessment", "待核验"), ", ".join(e["paragraph_id"] for e in row["evidence"]) or "—"]
             for cell, value in zip(cells, values):
-                cell.text = value
+                cell.text = tr(value)
         doc.add_page_break()
     for line in content.splitlines():
         if line.startswith("# "):

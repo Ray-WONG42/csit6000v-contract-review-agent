@@ -16,16 +16,17 @@ from .config import settings, ROOT
 from .db import initialize, session, User, Login, Code, Contract, File, Job, Event, Skill, Ticket, Delivery, LocalMail, AssistantRun, dump
 from .security import current_user, legal_user, own, password_hash, password_matches, digest, code_digest, seed_users
 from .schemas import EmailInput, RegisterInput, LoginInput, SkillInput, JobInput, CompanyInput, ReportInput, ContractView, JobView, EventView, AssistantInput
-from .services import ingest, create_job, contract_view, job_view, send_mail, write_file
-from engine import RULES, MAX_FILE, docx_report
+from .services import (ACTIVE_ASSISTANT_STATES, ingest, create_job, contract_view, job_view, send_mail,
+                       write_file, resolve_model_selection, tacc_configured, delete_history)
+from engine import RULES, MAX_FILE, Model, docx_report
 
 
 @asynccontextmanager
 async def lifespan(app):
     initialize()
     seed_users()
-    if not settings.app_demo and settings.model_mode != "tacc":
-        raise RuntimeError("真实运行必须设置 MODEL_MODE=tacc")
+    if not settings.app_demo and settings.model_mode == "demo":
+        raise RuntimeError("真实运行需要启用 Ollama 或 TACC 模型")
     yield
 
 
@@ -62,19 +63,26 @@ def throttle(request, action, limit=15):
 
 @app.get("/api/config")
 def config():
-    tacc_configured = bool((settings.tacc_url or settings.llm_base_url) and (settings.tacc_model or settings.model_name))
-    if settings.tacc_protocol == "sdk":
-        from .tacc_sdk import service_record
-        tacc_configured = bool(settings.tacc_url or service_record().get("ready"))
     return {"demo": settings.app_demo, "model_mode": settings.model_mode,
+            "model_name": settings.ollama_model if settings.model_mode == "ollama" else "",
             "categories": [{"id": key, "label": value[0]} for key, value in RULES.items()],
             "mailbox": settings.graph_mailbox,
-            "tacc_configured": tacc_configured}
+            "tacc_configured": tacc_configured()}
 
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "mode": settings.model_mode}
+
+
+@app.get("/api/ollama/models", response_model=list[str])
+def ollama_models(user=Depends(legal_user)):
+    if settings.model_mode == "demo":
+        return []
+    try:
+        return Model.local_ollama_models()
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.post("/api/assistant/runs")
@@ -85,15 +93,16 @@ def assistant_start(body: AssistantInput, user=Depends(legal_user)):
             own(db.get(Contract, body.contract_id), user)
         previous = db.scalar(select(AssistantRun).where(AssistantRun.owner_id == user.id,
                                                        AssistantRun.request_key == body.request_key))
-        request = dump(body.model_dump())
         if previous:
-            if previous.request != request:
+            if AssistantInput.model_validate_json(previous.request) != body:
                 raise HTTPException(409, "此提交标识已用于其他消息")
             return {"id": previous.id, "state": previous.state}
         active = db.scalars(select(AssistantRun).where(AssistantRun.owner_id == user.id,
-                                                      AssistantRun.state.in_(["queued", "running"]))).all()
+                                                      AssistantRun.state.in_(ACTIVE_ASSISTANT_STATES))).all()
         if len(active) >= 3:
             raise HTTPException(429, "请等待当前对话完成")
+        snapshot = resolve_model_selection(body.model_mode, body.ollama_model)
+        request = dump({**body.model_dump(), "model_snapshot": snapshot})
         run = AssistantRun(owner_id=user.id, request_key=body.request_key, request=request)
         db.add(run)
         db.flush()
@@ -201,6 +210,12 @@ def classify(contract_id: str, body: CompanyInput, user=Depends(legal_user)):
         return contract_view(contract)
 
 
+@app.delete("/api/contracts/{contract_id}")
+def remove_contract(contract_id: str, user=Depends(legal_user)):
+    delete_history(user, contract_id=contract_id)
+    return {"ok": True}
+
+
 @app.get("/api/contracts/{contract_id}/paragraphs")
 def paragraphs(contract_id: str, user=Depends(legal_user)):
     with session() as db:
@@ -236,9 +251,16 @@ def events(job_id: str, after: int = 0, user=Depends(legal_user)):
                 for e in db.scalars(select(Event).where(Event.job_id == job_id, Event.id > after).order_by(Event.id).limit(300))]
 
 
+@app.delete("/api/jobs/{job_id}")
+def remove_job(job_id: str, user=Depends(legal_user)):
+    delete_history(user, job_id=job_id)
+    return {"ok": True}
+
+
 @app.post("/api/jobs/{job_id}/confirm")
 def confirm(job_id: str, user=Depends(legal_user)):
     with session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         job = own(db.get(Job, job_id), user)
         if job.state != "awaiting_confirmation":
             raise HTTPException(409, "此任务无需确认")
@@ -249,6 +271,7 @@ def confirm(job_id: str, user=Depends(legal_user)):
 @app.post("/api/jobs/{job_id}/report-versions")
 def save_report(job_id: str, body: ReportInput, user=Depends(legal_user)):
     with session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         job = own(db.get(Job, job_id), user)
         if not job.report_file:
             raise HTTPException(409, "审查报告尚未完成")
@@ -259,6 +282,7 @@ def save_report(job_id: str, body: ReportInput, user=Depends(legal_user)):
 @app.post("/api/jobs/{job_id}/resend")
 def resend(job_id: str, user=Depends(legal_user)):
     with session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
         own(db.get(Job, job_id), user)
         delivery = db.scalar(select(Delivery).where(Delivery.job_id == job_id))
         if not delivery or delivery.state not in ("failed", "uncertain"):

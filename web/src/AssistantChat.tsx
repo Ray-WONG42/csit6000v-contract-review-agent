@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Globe, LoaderCircle, Plus, Download, Settings2 } from "lucide-react";
+import {
+  ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, Download,
+  FileCheck2, FileSearch, FileText, FolderOpen, Globe, LoaderCircle,
+  MessageSquareText, Plus, Settings2, Upload,
+} from "lucide-react";
 import { api, fileUrl } from "./api";
 import { loadLocal, saveLocal, persistChat } from "./storage";
 
@@ -9,10 +13,21 @@ type Trace = { stage: string; title: string; detail: string };
 type Result = { answer: string; sources?: Source[]; artifacts?: Artifact[]; reviews?: { job_id: string; contract_id: string; state: string }[] };
 type Message = { id: string; role: "user" | "assistant"; text: string; run?: string; pending?: boolean;
   error?: string; events?: Trace[]; output?: Result };
+type DeskContract = { id: string; name: string; company: string; created: number };
 
-export default function AssistantChat({ userId, contractId = "", demo, onSkillsChanged, onReview }: {
-  userId: string; contractId?: string; demo: boolean; onSkillsChanged: () => void;
+const fileDate = new Intl.DateTimeFormat("zh-HK", { month: "short", day: "numeric" });
+const skillPrompt = "帮我创建并保存一个保密条款审查 Skill，核对保密主体、范围、例外和存续期。";
+const demoSkillPrompt = '/创建Skill {"name":"保密条款检查","categories":[],"focus":"核对保密主体、范围、例外和存续期","policy":"evidence-only@1"}';
+
+export default function AssistantChat({
+  userId, contractId = "", demo, modelMode, ollamaModel, onSkillsChanged, onReview,
+  deskContracts = [], deskVisit, onOpenContract, onUpload, onOpenSkills,
+}: {
+  userId: string; contractId?: string; demo: boolean; modelMode: "" | "ollama" | "tacc";
+  ollamaModel: string; onSkillsChanged: () => void;
   onReview: (contract: string, job: string) => void;
+  deskContracts?: DeskContract[]; deskVisit?: number; onOpenContract?: (id: string) => void;
+  onUpload?: () => void; onOpenSkills?: () => void;
 }) {
   const indexKey = "assistant-index:" + userId + ":" + (contractId || "general");
   const [threads, setThreads] = useState<{ id: string; title: string }[]>(() => {
@@ -27,9 +42,14 @@ export default function AssistantChat({ userId, contractId = "", demo, onSkillsC
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [overview, setOverview] = useState(!contractId);
   const latest = useRef(messages);
   const active = messages.find(message => message.pending && message.run);
-  const scrollEnd = useRef<HTMLDivElement>(null);
+  const chatLog = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (deskVisit !== undefined) setOverview(true);
+  }, [deskVisit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,6 +58,7 @@ export default function AssistantChat({ userId, contractId = "", demo, onSkillsC
         const restored = saved.messages as Message[];
         latest.current = restored;
         setMessages(restored); setDraft(saved.draft); setLoaded(true);
+        if (restored.some(message => message.pending && message.run)) setOverview(false);
       }
     }).catch(() => { if (!cancelled) { setLoaded(true); setError("浏览器记录读取失败"); } });
     return () => { cancelled = true; };
@@ -47,9 +68,14 @@ export default function AssistantChat({ userId, contractId = "", demo, onSkillsC
     if (!loaded) return;
     latest.current = messages;
     saveLocal(userId, storageKey, { messages, draft }).catch(() => setError("聊天本地保存失败"));
-    scrollEnd.current?.scrollIntoView({ block: "end" });
   }, [messages, draft, loaded, userId, storageKey]);
-  useEffect(() => { if (persistChat) localStorage.setItem(indexKey, JSON.stringify(threads)); }, [threads]);
+
+  useEffect(() => {
+    const log = chatLog.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [messages, overview]);
+
+  useEffect(() => { if (persistChat) localStorage.setItem(indexKey, JSON.stringify(threads)); }, [threads, indexKey]);
 
   useEffect(() => {
     if (!active?.run) return;
@@ -64,7 +90,8 @@ export default function AssistantChat({ userId, contractId = "", demo, onSkillsC
         const finished = data.state === "completed" || data.state === "failed";
         const next = latest.current.map(message => message.id === active!.id ? {
           ...message, events: data.events, pending: !finished,
-          text: finished ? data.result.answer || data.error || "处理完成" : "",
+          text: finished ? data.result.answer || data.error || "处理完成"
+            : data.state === "waiting_tacc" ? "等待学校 GPU 集群…" : "",
           output: data.result, error: data.error,
         } : message);
         latest.current = next; setMessages(next);
@@ -88,63 +115,126 @@ export default function AssistantChat({ userId, contractId = "", demo, onSkillsC
         .slice(-8).map(item => ({ role: item.role, content: item.text.slice(0, 1500) }));
       const run = await api<{id: string}>("/assistant/runs", "POST", {
         request_key: crypto.randomUUID(), message, history, contract_id: contractId, allow_web: allowWeb,
+        model_mode: modelMode,
+        ollama_model: ollamaModel,
       });
       const next: Message[] = [...messages, { id: crypto.randomUUID(), role: "user", text: message },
         { id: crypto.randomUUID(), role: "assistant", text: "", run: run.id, pending: true }];
-      latest.current = next; setMessages(next); setDraft("");
+      latest.current = next; setMessages(next); setDraft(""); setOverview(false);
       setThreads(current => current.map(item => item.id === thread && !messages.length ? {...item, title: message.slice(0, 35)} : item));
     } catch (err: any) { setError(err.message); }
     finally { setSending(false); }
   }
 
-  return <div className="general-chat">
-    <div className="general-heading">
-      <span>{contractId ? "可结合当前合同提问" : "自由对话"}</span>
-      <select aria-label="切换对话" disabled={!!active} value={thread} onChange={event => {setLoaded(false);setMessages([]);setThread(event.target.value);}}>
+  function openThread(id: string) {
+    setOverview(false);
+    if (id === thread) return;
+    setLoaded(false); setMessages([]); latest.current = []; setDraft(""); setError(""); setThread(id);
+  }
+
+  const recent = [...deskContracts].sort((a, b) => b.created - a.created).slice(0, 3);
+  const prompts = [
+    { icon: BookOpen, title: "拟定保密条款核查清单", text: demo ? demoSkillPrompt : skillPrompt },
+    contractId && !demo
+      ? { icon: FileSearch, title: "查找协议日期与责任主体", text: "请从当前合同中找出协议日期和签约主体，并引用原文段落。" }
+      : { icon: Globe, title: "检索公开资料与来源", text: demo ? "/搜索 香港 公司注册处 查册" : "查找香港公司注册处介绍公司查册程序的官方资料，并列出来源。" },
+  ];
+  const promptButtons = prompts.map(({ icon: Icon, title, text }) => (
+    <button type="button" key={title} disabled={!loaded || sending} onClick={() => { setDraft(text); input.current?.focus(); }}>
+      <Icon size={17} aria-hidden="true" /><span>{title}</span><ArrowUpRight size={14} aria-hidden="true" />
+    </button>
+  ));
+  const threadControls = (
+    <div className="thread-controls">
+      {overview && messages.length > 0 && <button type="button" onClick={() => setOverview(false)}>打开对话 <ArrowRight size={13}/></button>}
+      <select aria-label="切换对话" disabled={!!active || sending} value={thread} onChange={event => openThread(event.target.value)}>
         {threads.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
-      <button disabled={!!active} onClick={() => {
-        const id = crypto.randomUUID(); setLoaded(false); setMessages([]); latest.current = []; setDraft(""); setError("");
-        setThreads([...threads, {id, title: "新对话"}]); setThread(id);
+      <button type="button" disabled={!!active || sending} onClick={() => {
+        const id = crypto.randomUUID();
+        setThreads([...threads, {id, title: "新对话"}]); openThread(id);
       }}><Plus size={14}/> 新对话</button>
     </div>
-    <div className="general-messages">
-      {!messages.length && <div className="general-intro">
-        <h2>有什么想讨论或处理的？</h2>
-        <p>可以聊天、查找资料、阅读网页，或为你的工作创建 Skill。</p>
-        <div className="suggestions">
-          {(demo ? ["/搜索 HKUST TACC 官方文档", '/创建Skill {"name":"保密条款检查","categories":[],"focus":"核对保密主体、范围、例外和存续期","policy":"evidence-only@1"}'] :
-            ["帮我创建并保存一个保密条款审查 Skill", "联网查找 TACC 官方使用文档，并列出来源"]).map(text =>
-            <button key={text} onClick={() => setDraft(text)}>{text}</button>)}
+  );
+
+  return <div className={`general-chat ${overview ? "desk-overview" : "discussion"}`}>
+    {overview ? <div className="desk-content">
+      <section className="desk-cover" aria-labelledby="desk-title">
+        <div className="desk-cover-copy">
+          <p className="desk-kicker">合同审查工作台</p>
+          <h1 id="desk-title" lang="en">Review desk</h1>
+          <p className="desk-lede">审阅合同条款，核对原文证据，编制审查报告。</p>
+          <div className="desk-cover-actions">
+            <button className="desk-upload" type="button" onClick={onUpload}><Upload size={16}/> 上传新合同</button>
+            <button className="desk-skills" type="button" onClick={onOpenSkills}>我的审查模板 <ArrowUpRight size={15}/></button>
+          </div>
         </div>
-      </div>}
-      {messages.map(message => <div key={message.id} className={message.role === "user" ? "user-bubble" : "general-answer"}>
-        {message.role === "assistant" && <div className="assistant-name"><div className="small-logo">C</div> 助手 {message.pending && <LoaderCircle className="spin" size={14}/>}</div>}
-        {!!message.events?.length && <details className="trace" open={message.pending}>
-          <summary>{message.events.length} 条模型与工具记录</summary>
-          <div className="trace-list">{message.events.map((event, index) => <div key={index}><span className="trace-dot"/><div>{event.title}<small>{event.detail}</small></div></div>)}</div>
-        </details>}
-        <p className={message.error ? "error-text" : ""}>{message.text || (message.pending ? "正在处理…" : "")}</p>
-        {!!message.output?.sources?.length && <div className="source-list"><strong>本轮获取的来源</strong>{message.output.sources.map(source =>
-          <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}</div>}
-        {message.output?.artifacts?.map((item, index) => item.file_id ?
-          <a key={index} className="secondary" href={fileUrl(item.file_id, true)}><Download size={14}/>{item.name}</a> :
-          <div className="skill-saved" key={index}><Settings2 size={14}/>{item.name} · 已保存到我的 Skills</div>)}
-        {message.output?.reviews?.map(item => <button key={item.job_id} className="secondary" onClick={() => onReview(item.contract_id, item.job_id)}>打开合同审查任务</button>)}
-      </div>)}
-      <div ref={scrollEnd}/>
-    </div>
+        <div className="desk-cover-image" aria-hidden="true"/>
+      </section>
+      <div className="desk-columns">
+        <section className="desk-register">
+          <h2><FolderOpen size={17} aria-hidden="true"/> 最近合同</h2>
+          {recent.length > 0 ? <ul>{recent.map(contract => <li key={contract.id}>
+            <button type="button" onClick={() => onOpenContract?.(contract.id)}>
+              <FileText size={18}/><span className="desk-file-title"><strong>{contract.name}</strong>{contract.company && <small>{contract.company}</small>}</span>
+              <time dateTime={new Date(contract.created * 1000).toISOString()}>{fileDate.format(contract.created * 1000)}</time>
+              <ArrowUpRight size={14}/>
+            </button>
+          </li>)}</ul> : <div className="desk-empty-register">
+            <FileText size={25} strokeWidth={1.35} aria-hidden="true"/>
+            <div><strong>尚未添加合同</strong><p>支持 PDF、DOCX 和 TXT，单份最大 12 MB。</p></div>
+          </div>}
+        </section>
+        <section className="desk-tools">
+          <h2><FileCheck2 size={17} aria-hidden="true"/> 常用审查任务</h2>
+          <div className="desk-prompts">{promptButtons}</div>
+        </section>
+      </div>
+    </div> : <>
+      <div className="general-heading">
+        <span className="chat-section-heading"><MessageSquareText size={17}/>{contractId ? "合同对话" : "法务助手"}</span>
+        <div className="chat-heading-actions">
+          {!contractId && <button type="button" className="back-to-desk" onClick={() => setOverview(true)}><ArrowLeft size={14}/> 工作桌</button>}
+          {threadControls}
+        </div>
+      </div>
+      <div className="general-messages" ref={chatLog}>
+        {!messages.length && <section className="general-intro">
+          <MessageSquareText size={23} strokeWidth={1.4}/>
+          <h2 lang="en">{contractId ? "Contract notes" : "Counsel’s desk"}</h2>
+          <p>{contractId ? "就这份合同提问，或选择一项审查任务。" : "输入法务问题，或选择一项审查任务。"}</p>
+          <div className="desk-prompts">{promptButtons}</div>
+        </section>}
+        {messages.map(message => <div key={message.id} className={message.role === "user" ? "user-bubble" : "general-answer"}>
+          {message.role === "assistant" && <div className="assistant-name"><div className="small-logo">C</div> 法务助手 {message.pending && <LoaderCircle className="spin" size={14}/>}</div>}
+          {!!message.events?.length && <details className="trace" open={message.pending}>
+            <summary>{message.events.length} 条模型与工具记录</summary>
+            <div className="trace-list">{message.events.map((event, index) => <div key={index}><span className="trace-dot"/><div>{event.title}<small>{event.detail}</small></div></div>)}</div>
+          </details>}
+          <p className={message.error ? "error-text" : ""}>{message.text || (message.pending ? "正在处理…" : "")}</p>
+          {!!message.output?.sources?.length && <div className="source-list"><strong>本轮获取的来源</strong>{message.output.sources.map(source =>
+            <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>)}</div>}
+          {message.output?.artifacts?.map((item, index) => item.file_id ?
+            <a key={index} className="secondary" href={fileUrl(item.file_id, true)}><Download size={14}/>{item.name}</a> :
+            <div className="skill-saved" key={index}><Settings2 size={14}/>{item.name} · 已保存到我的 Skills</div>)}
+          {message.output?.reviews?.map(item => <button key={item.job_id} className="secondary" onClick={() => onReview(item.contract_id, item.job_id)}>打开合同审查任务</button>)}
+        </div>)}
+      </div>
+    </>}
     {error && <div className="alert" role="alert">{error}</div>}
     <form className="composer-wrap" onSubmit={send}>
+      {overview && <div className="desk-chat-heading">
+        <h2 className="chat-section-heading"><MessageSquareText size={17}/> 法务助手</h2>{threadControls}
+      </div>}
       {demo && <p className="general-mode">演示模式支持显式工具命令。开放问答与自动选择工具需要真实模型。</p>}
-      <div className="composer"><textarea aria-label="自由对话消息" placeholder="输入问题、研究任务或 Skill 要求…" value={draft}
+      <div className="composer"><textarea ref={input} aria-label="自由对话消息" disabled={!loaded || sending} placeholder={contractId ? "输入关于当前合同的问题…" : "输入法务问题或审查要求…"} value={draft}
         onChange={event => setDraft(event.target.value)}
         onKeyDown={event => { if(event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing){event.preventDefault();send();} }}/>
         <div className="composer-controls"><label className="web-toggle"><input type="checkbox" checked={allowWeb} onChange={event => setAllowWeb(event.target.checked)}/><Globe size={14}/> 联网</label>
           <button type="submit" className="send-button" aria-label="发送自由对话" disabled={!loaded || !draft.trim() || sending || !!active}><ArrowUp size={18}/></button>
         </div>
       </div>
-      <div className="composer-note">聊天保存在本浏览器 · 选中的历史消息会作为本轮上下文提交</div>
+      <div className="composer-note">{persistChat ? "对话保存在本浏览器" : "对话仅保留在本次页面会话"} · 近期消息会随问题一并提交</div>
     </form>
   </div>;
 }

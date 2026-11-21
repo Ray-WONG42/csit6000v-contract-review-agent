@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict, model_validator
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import HTTPException
 
 from .config import settings
@@ -92,13 +92,12 @@ DESCRIPTIONS = {
 }
 
 
-def model_decision(system, payload, event, checkpoint):
-    if settings.model_mode == "demo":
-        raise ValueError("当前为本地演示模式。通用聊天需要配置真实模型。可使用 /搜索 关键词、/读取 HTTPS链接、/创建Skill JSON 和 /生成文档 内容。")
-    if settings.tacc_protocol == "sdk":
+def model_decision(system, payload, model, checkpoint):
+    if model.mode == "demo":
+        raise ValueError("当前为本地演示模式。通用聊天需要启用 Ollama 或 TACC。可使用 /搜索 关键词、/读取 HTTPS链接、/创建Skill JSON 和 /生成文档 内容。")
+    if model.mode == "tacc" and settings.tacc_protocol == "sdk":
         from .tacc_sdk import run_remote
-        return run_remote("decision", event, checkpoint, system=system, payload=payload)
-    model = Model(event, "tacc")
+        return run_remote("decision", model.event, checkpoint, auto_start=True, system=system, payload=payload)
     return model.call(system, payload, "assistant")
 
 
@@ -142,8 +141,12 @@ def run_tool(name, arguments, user, run_id, step, request):
             return {"contract_id": contract.id, "paragraphs": output, "total_paragraphs": len(paragraphs),
                     "truncated": len(output) < len(paragraphs)}
         if name == "review_contract":
+            db.execute(text("BEGIN IMMEDIATE"))
             job = create_job(db, user, args.contract_id, JobInput(instruction=args.instruction,
-                             skill_id=args.skill_id, request_key=f"agent-{run_id}-{step}"))
+                             skill_id=args.skill_id, request_key=f"agent-{run_id}-{step}",
+                             model_mode=request.get("model_mode", ""),
+                             ollama_model=request.get("ollama_model", "")),
+                             model_snapshot=request.get("model_snapshot"))
             return {"job_id": job.id, "contract_id": job.contract_id, "state": job.state}
         if name == "save_skill":
             if not has_skill_permission(request["message"]):
@@ -163,7 +166,8 @@ def run_tool(name, arguments, user, run_id, step, request):
             stored = db.scalar(select(File).where(File.job_id == job_key, File.owner_id == user.id))
             if not stored:
                 name = re.sub(r'[<>:"/\\|?*]', "_", args.name).rstrip(". ") + ".docx"
-                stored = write_file(db, user.id, "", name, docx_report(args.content), "draft", job_key)
+                stored = write_file(db, user.id, request.get("contract_id", ""), name,
+                                    docx_report(args.content), "draft", job_key)
             return {"file_id": stored.id, "name": stored.name}
     raise ValueError("工具未执行")
 
@@ -203,7 +207,19 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
     system = "\n\n".join(load_prompt(name) for name in ("assistant_system", "tool", "reflection"))
     observations = checkpoint("observations") or []
     sources, artifacts, reviews = [], [], []
-    demo = settings.model_mode == "demo"
+    snapshot = request.get("model_snapshot")
+    if not snapshot and request.get("resolved_ollama_model"):
+        snapshot = {"model_mode": "ollama", "ollama_model": request["resolved_ollama_model"]}
+        request = {**request, "model_snapshot": snapshot}
+    snapshot = snapshot or {}
+    model = Model(event, snapshot.get("model_mode") or settings.model_mode,
+                  ollama_model=snapshot.get("ollama_model") or None)
+    if model.mode == "ollama" and request.get("ollama_model"):
+        model.require_local_ollama_model()
+    model_info = {"mode": model.mode}
+    if model.mode == "ollama":
+        model_info["model_name"] = model.ollama_model
+    demo = model.mode == "demo"
     for step in range(7):
         if step < len(observations):
             saved = observations[step]
@@ -224,7 +240,8 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
             elif demo and step > 0:
                 decision = {"action": "final", "answer": "工具执行结果\n" + json.dumps(observations[-1]["result"], ensure_ascii=False, indent=2)[:12000]}
             else:
-                event("model", "理解请求并选择工具", "")
+                if model.mode != "tacc" or settings.tacc_protocol != "sdk":
+                    event("model", "理解请求并选择工具", "")
                 context = [{"tool": item["tool"], "result_excerpt": json.dumps(item["result"], ensure_ascii=False)[:2000]}
                            for item in observations[-3:]]
                 history = [{"role": item["role"], "content": item["content"][-400:]} for item in (request.get("history", []) if settings.agent_short_term_memory else [])[-4:]]
@@ -237,7 +254,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
                     payload["instruction"] = load_prompt("budget")
                 def scoped_checkpoint(key, value=None):
                     return checkpoint(f"model:{step}:" + key, value)
-                decision = decide(system, payload) if decide else model_decision(system, payload, event, scoped_checkpoint)
+                decision = decide(system, payload) if decide else model_decision(system, payload, model, scoped_checkpoint)
             if not isinstance(decision, dict) or decision.get("action") not in ("final", "tool"):
                 raise ValueError("模型没有返回有效的聊天或工具动作")
             checkpoint(decision_key, decision)
@@ -246,7 +263,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("模型没有返回回答内容")
             return {"answer": answer[:30000], "sources": sources, "artifacts": artifacts, "reviews": reviews,
-                    "mode": settings.model_mode}
+                    **model_info}
         if step == 6:
             break
         name, arguments = decision.get("tool"), decision.get("arguments")
@@ -268,11 +285,11 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
         checkpoint("observations", observations)
         if result.get("error") and prior_errors >= 1:
             return {"answer": f"工具 {name} 连续两次执行失败，已停止重试。原因：{result['error']}。本次操作尚未完成。",
-                    "sources": sources, "artifacts": artifacts, "reviews": reviews, "mode": settings.model_mode}
+                    "sources": sources, "artifacts": artifacts, "reviews": reviews, **model_info}
         collect_sources(result, sources)
         if name in ("create_document", "save_skill") and not result.get("error"):
             artifacts.append(result)
         if name == "review_contract" and result.get("job_id"):
             reviews.append(result)
     return {"answer": "已到达本轮工具调用上限，请根据处理记录继续提问。", "sources": sources,
-            "artifacts": artifacts, "reviews": reviews, "mode": settings.model_mode}
+            "artifacts": artifacts, "reviews": reviews, **model_info}

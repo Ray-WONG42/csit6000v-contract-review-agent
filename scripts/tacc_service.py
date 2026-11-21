@@ -8,32 +8,20 @@ import tempfile
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import ROOT, settings
-from app.tacc_sdk import SERVICE_URL, sdk, service_log, service_record, save_service, submit
+from app.tacc_sdk import inspect_service, sdk, service_lock, service_record, save_service, start_service_job
 
 
 def poll_ready(job_id, deadline):
     while time.monotonic() < deadline:
-        try:
-            log = service_log(job_id)
-        except RuntimeError as error:
-            if getattr(error, "code", None) != "file_missing" and "No such file" not in str(error):
-                raise
-            log = ""
-        base = SERVICE_URL.search(log)
-        if "CLAUSE_SERVICE_EXIT" in log:
-            print(log[-3300:], file=sys.stderr)
-            save_service({"job_id": job_id, "ready": False})
-            raise RuntimeError(f"TACC 服务 {job_id} 已退出。")
-        if base and "Application startup complete" in log:
-            if any(x in log for x in ("TIME LIMIT", "CANCELLED", "Finished server process", "Application shutdown complete")):
-                save_service({"job_id": job_id, "ready": False})
-                raise RuntimeError(f"TACC 服务 {job_id} 已结束。")
-            save_service({"job_id": job_id, "base_url": base[1], "ready": True})
+        with service_lock():
+            status = inspect_service(job_id)
+            record = service_record()
+            if record.get("job_id") == job_id and record.get("state") != "stopped":
+                save_service({**record, **status, "checked_at": time.time()})
+        if status["ready"]:
             print(f"TACC Qwen ready. Service job {job_id}.", flush=True)
             return
-        if any(marker in log for marker in ("Exited with exit code", "CANCELLED", "TIME LIMIT", "CLAUSE_STARTUP_FAILURE", "CLAUSE_SERVICE_EXIT")):
-            print(log[-3300:], file=sys.stderr)
-            save_service({"job_id": job_id, "ready": False})
+        if status["state"] == "failed":
             raise RuntimeError(f"TACC 服务 {job_id} 启动失败，请查看作业日志。")
         time.sleep(8)
     raise TimeoutError(f"TACC 服务 {job_id} 仍在排队或启动，稍后运行 status。")
@@ -46,20 +34,9 @@ def main():
     parser.add_argument("--wait", type=int, default=480)
     parser.add_argument("--exclude-node", help="Avoid a known busy TACC node for this submission.")
     args = parser.parse_args()
-    saved = service_record()
-    job_id = args.job_id or saved.get("job_id")
+    job_id = args.job_id or service_record().get("job_id")
     if args.command == "start":
-        if saved.get("state") == "submitting" and not job_id:
-            raise RuntimeError("上次服务提交结果不确定，请先核对自己的作业并 adopt，避免重复提交。")
-        if job_id:
-            try:
-                state = sdk(["ps", "-j", job_id], timeout=60)
-            except RuntimeError as error:
-                if getattr(error, "code", None) != "job_missing" and "Invalid job id" not in str(error):
-                    raise
-            else:
-                if job_id in state:
-                    return poll_ready(job_id, time.monotonic() + args.wait)
+        staging = None
         if args.exclude_node:
             if not re.fullmatch(r"[A-Za-z0-9.-]{1,64}(?:,[A-Za-z0-9.-]{1,64})*", args.exclude_node):
                 raise ValueError("Invalid TACC node name.")
@@ -72,23 +49,20 @@ def main():
                 shutil.copyfile(source / name, staging / name)
             config = (source / "tuxiv.conf").read_text(encoding="utf-8")
             (staging / "tuxiv.conf").write_text(config.rstrip() + "\n    - exclude=" + args.exclude_node + "\n", encoding="utf-8")
-            save_service({"state": "submitting", "ready": False})
-            job_id = submit(staging)
-            save_service({"job_id": job_id, "ready": False})
-        else:
-            save_service({"state": "submitting", "ready": False})
-            job_id = submit(ROOT / "tacc" / "serve")
-        print("Submitted TACC Qwen service:", job_id, flush=True)
-        save_service({"job_id": job_id, "ready": False})
+        job_id = start_service_job(staging, args.job_id)
+        print("TACC Qwen service job:", job_id, flush=True)
     if not job_id or not str(job_id).isdigit():
         raise ValueError("需要有效的 TACC 服务作业编号")
     if args.command == "stop":
-        sdk(["cancel", "-j", job_id], timeout=60)
-        save_service({"job_id": job_id, "ready": False})
+        with service_lock():
+            sdk(["cancel", "-j", job_id], timeout=60)
+            if service_record().get("job_id") == job_id:
+                save_service({"job_id": job_id, "state": "stopped", "ready": False})
         print("Stop requested for TACC job", job_id)
         return
     if args.command == "adopt":
-        save_service({"job_id": job_id, "ready": False})
+        with service_lock():
+            save_service({"job_id": job_id, "ready": False})
     poll_ready(job_id, time.monotonic() + args.wait)
 
 

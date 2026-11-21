@@ -19,12 +19,22 @@ def main():
               "model_id_configured": bool(settings.tacc_model or settings.model_name), "graph_configured": Outlook().enabled,
               "public_url": settings.app_public_url, "secure_cookie": settings.app_secure_cookie,
               "tacc_protocol": settings.tacc_protocol}
+    if settings.model_mode == "ollama":
+        report["ollama_model"] = settings.ollama_model
+        report["ollama_url_configured"] = bool(settings.ollama_url)
     if settings.tacc_protocol == "sdk":
         record = service_record()
         report["tacc_service_job"] = record.get("job_id")
         report["tacc_service_marked_ready"] = bool(record.get("ready") or settings.tacc_url)
     if args.live:
-        if settings.tacc_protocol == "sdk":
+        if settings.model_mode == "ollama":
+            try:
+                result = Model(lambda *_: None, "ollama").call(load_prompt("probe"), {}, "connection_test")
+                report["ollama_test"] = result == {"ok": True}
+            except (ValueError, RuntimeError, OSError) as exc:
+                report["ollama_test"] = False
+                report["ollama_error"] = str(exc)[:250]
+        elif settings.tacc_protocol == "sdk":
             try:
                 result = run_remote("probe", lambda *_: None)
                 report["tacc_test"] = bool(result["ok"])

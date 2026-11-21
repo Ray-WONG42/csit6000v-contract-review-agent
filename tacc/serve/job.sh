@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-test "${CONDA_PREFIX:?SDK must load the course bootstrap}" = /mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1
+course_bootstrap=/mnt/home/public/course-envs/CSIT6000V/assignment1
+if [[ "${CONDA_PREFIX:-}" != "$course_bootstrap/mpi-gemm-v1" ]]; then
+    PS1=${PS1-}
+    source "$course_bootstrap/activate.sh"
+fi
+test "${CONDA_PREFIX:?SDK must load the course bootstrap}" = "$course_bootstrap/mpi-gemm-v1"
 source /mnt/home/public/course-envs/CSIT6000V/project/activate.sh
 : "${TACC_WORKDIR:?Submit with tcloud submit}"
 : "${QWEN_RUN_DIR:?Course activation must create a run directory}"

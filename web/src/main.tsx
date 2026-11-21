@@ -4,6 +4,8 @@ import {
   ArrowUp,
   Plus,
   FileText,
+  LibraryBig,
+  LayoutDashboard,
   PanelLeft,
   ChevronRight,
   Check,
@@ -15,21 +17,23 @@ import {
   Download,
   LogOut,
   ShieldCheck,
-  Sparkles,
   FileCheck2,
   Circle,
   LoaderCircle,
   Pencil,
-  ExternalLink,
   Paperclip,
   Copy,
+  Trash2,
 } from "lucide-react";
 import { api, setCsrf, fileUrl } from "./api";
-import { loadLocal, saveLocal, LocalConversation } from "./storage";
+import { clearContractHistory, loadLocal, pruneReviewHistory, saveLocal, LocalConversation } from "./storage";
 import type { components } from "./generated";
 import "./style.css";
 import "./assistant.css";
+import "./review.css";
+import "./login.css";
 import AssistantChat from "./AssistantChat";
+import ReviewPanes from "./ReviewPanes";
 
 type User = { id: string; email: string; role: string; csrf: string };
 type Contract = components["schemas"]["ContractView"];
@@ -41,6 +45,7 @@ type Row = {
   assessment: string;
   explanation: string;
   finding?: string;
+  checklist?: { requirement: string; assessment: string }[];
   evidence: Evidence[];
   question: string;
   missing: string[];
@@ -56,18 +61,36 @@ type Job = {
   created: number;
   error: string;
   delivery: string;
+  model_mode?: string;
+  model_name?: string;
   result?: {
     rows: Row[];
     answer?: string;
     message?: string;
     seconds?: number;
     model_mode?: string;
+    model_name?: string;
     calls?: any[];
   };
 };
 type Trace = { id: number; stage: string; title: string; detail: string };
+type HistoryTarget = { kind: "contract" | "job"; id: string; name: string };
+type VisibleRetrievalSource = Exclude<NonNullable<Evidence["retrieval_sources"]>[number], "survey">;
+const retrievalSourceLabels: Record<VisibleRetrievalSource, string> = {
+  keyword: "关键词检索",
+  vector: "向量检索",
+  fallback: "文档开头",
+  adjacent: "相邻段落",
+};
+function modelLabel(mode?: string, name?: string) {
+  if (mode === "ollama") return name ? `${name} · Ollama` : "本地 Ollama";
+  if (mode === "tacc") return "Qwen · TACC";
+  return "演示模式";
+}
 const activeStates = [
   "queued",
+  "waiting_tacc",
+  "tacc_client",
   "parsing",
   "surveying",
   "extracting",
@@ -76,6 +99,8 @@ const activeStates = [
 ];
 const statusLabel: Record<string, string> = {
   queued: "排队中",
+  waiting_tacc: "等待学校 GPU 集群",
+  tacc_client: "等待 TACC 回复",
   parsing: "解析合同",
   surveying: "通读合同",
   extracting: "提取条款",
@@ -93,6 +118,8 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [selected, setSelected] = useState<Contract | null>(null);
+  const [fileState, setFileState] = useState<"loading" | "ready" | "error">("ready");
+  const [deskVisit, setDeskVisit] = useState(0);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [job, setJob] = useState<Job | null>(null);
   const [events, setEvents] = useState<Trace[]>([]);
@@ -110,6 +137,9 @@ function App() {
   const [highlight, setHighlight] = useState<Evidence | null>(null);
   const [editor, setEditor] = useState("");
   const [modal, setModal] = useState("");
+  const [historyTarget, setHistoryTarget] = useState<HistoryTarget | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -117,17 +147,63 @@ function App() {
   const [artifacts, setArtifacts] = useState<any[]>([]);
   const [localMails, setLocalMails] = useState<any[]>([]);
   const [ticket, setTicket] = useState<any>(null);
-  const [sidebar, setSidebar] = useState(true);
+  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 900px)").matches);
+  const [sidebar, setSidebar] = useState(() => !window.matchMedia("(max-width: 900px)").matches);
+  const drawerClose = useRef<HTMLButtonElement>(null);
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const generation = useRef(0);
   const [general, setGeneral] = useState(true);
+  const [modelPreference, setModelPreference] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  const [ollamaModelsError, setOllamaModelsError] = useState("");
+  const canSelectModel = Boolean(config && config.model_mode !== "demo" && user?.role === "legal");
+  const preference = canSelectModel ? modelPreference : "";
+  const requestedMode = preference === "tacc" ? "tacc" : preference.startsWith("ollama:") ? "ollama" : "";
+  const ollamaModel = requestedMode === "ollama" ? preference.slice("ollama:".length) : "";
+  const selectedModelOption = preference || (config?.model_mode === "tacc" ? "tacc" : "");
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const resize = (event: MediaQueryListEvent) => {
+      setCompact(event.matches);
+      setSidebar(!event.matches);
+    };
+    query.addEventListener("change", resize);
+    return () => query.removeEventListener("change", resize);
+  }, []);
+  useEffect(() => {
+    if (compact && sidebar) drawerClose.current?.focus();
+  }, [compact, sidebar]);
+  useEffect(() => {
+    if (modal) modalRef.current?.showModal();
+  }, [modal]);
+
+  function closeDrawer() {
+    if (compact) {
+      setSidebar(false);
+      requestAnimationFrame(() => sidebarToggle.current?.focus());
+    }
+  }
+  function showDesk() {
+    ++generation.current;
+    selectedRef.current = "";
+    setSelected(null);
+    setJob(null);
+    setGeneral(true);
+    setDeskVisit(value => value + 1);
+    closeDrawer();
+  }
 
   async function openAgentReview(contractId: string, jobId: string) {
     const contract = contracts.find(item => item.id === contractId);
-    if (!contract) return;
+    if (!contract) {
+      setError("这份合同已不在档案中");
+      return;
+    }
     await selectContract(contract);
-    setGeneral(false);
-    await openJob(jobId);
+    if (selectedRef.current === contractId) await openJob(jobId).catch(fail);
   }
 
   useEffect(() => {
@@ -149,6 +225,33 @@ function App() {
     setUser(value);
     setError("");
     userRef.current = value;
+    try {
+      const previousOllamaModel = localStorage.getItem("ollama-model:" + value.id);
+      setModelPreference(localStorage.getItem("model-selection:" + value.id) ??
+        (previousOllamaModel ? `ollama:${previousOllamaModel}` : ""));
+    } catch {
+      setModelPreference("");
+    }
+  }
+  useEffect(() => {
+    if (!canSelectModel) return;
+    let cancelled = false;
+    setOllamaModels(null);
+    setOllamaModelsError("");
+    api<string[]>("/ollama/models").then(
+      (models) => { if (!cancelled) setOllamaModels(models); },
+      (error) => { if (!cancelled) setOllamaModelsError(error.message); },
+    );
+    return () => { cancelled = true; };
+  }, [canSelectModel, user?.id]);
+
+  function chooseModel(model: string, userId: string) {
+    setModelPreference(model);
+    try {
+      localStorage.setItem("model-selection:" + userId, model);
+    } catch {
+      // The selection still applies within the current browser session.
+    }
   }
   useEffect(() => {
     if (user) {
@@ -180,8 +283,12 @@ function App() {
   }
   async function selectContract(contract: Contract) {
     const version = ++generation.current;
+    closeDrawer();
+    setGeneral(false);
+    setTab("risk");
     selectedRef.current = contract.id;
     setSelected(contract);
+    setFileState("loading");
     setJob(null);
     setJobs([]);
     setEvents([]);
@@ -204,14 +311,20 @@ function App() {
           api<any[]>("/contracts/" + contract.id + "/paragraphs"),
         ]);
         if (version !== generation.current) return;
-        setLocal(saved);
-        localRef.current = saved;
+        const cleaned = pruneReviewHistory(saved, new Set(data.map(item => item.id)));
+        setLocal(cleaned);
+        localRef.current = cleaned;
+        if (cleaned !== saved) void saveLocal(user.id, contract.id, cleaned).catch(fail);
         setJobs(data);
         setParagraphs(parsed);
         if (data.length) await openJob(data[data.length - 1].id, version);
       }
+      if (version === generation.current) setFileState("ready");
     } catch (e) {
-      fail(e);
+      if (version === generation.current) {
+        setFileState("error");
+        fail(e);
+      }
     }
   }
   async function openJob(id: string, version = generation.current) {
@@ -280,7 +393,7 @@ function App() {
           }
         }
       } catch (e) {
-        fail(e);
+        if (!stopped && version === generation.current) fail(e);
       }
     }, 1200);
     return () => {
@@ -288,6 +401,40 @@ function App() {
       clearInterval(timer);
     };
   }, [job?.id, selected?.id, user?.id]);
+
+  function askToDelete(target: HistoryTarget) {
+    setHistoryTarget(target);
+    setDeleteError("");
+    setModal("delete");
+  }
+
+  async function deleteSelectedHistory() {
+    if (!user || !historyTarget || deleting) return;
+    const { kind, id } = historyTarget;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api((kind === "contract" ? "/contracts/" : "/jobs/") + id, "DELETE");
+      setModal("");
+      setHistoryTarget(null);
+      setError("");
+      if (kind === "contract") {
+        setContracts(current => current.filter(contract => contract.id !== id));
+        if (selectedRef.current === id) showDesk();
+        setNotice("合同及其历史记录已删除");
+        await clearContractHistory(user.id, id).catch(() =>
+          setNotice("合同已删除，当前浏览器的本地历史清理失败"),
+        );
+      } else {
+        if (selected) await selectContract(selected);
+        setNotice("审查记录已删除");
+      }
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function upload(file: File) {
     setBusy(true);
@@ -319,6 +466,8 @@ function App() {
           skill_id: skill,
           parent_id: job?.id || "",
           request_key: crypto.randomUUID(),
+          model_mode: requestedMode,
+          ollama_model: ollamaModel,
         },
       );
       await persist({
@@ -349,6 +498,13 @@ function App() {
       setUser(null);
       setSelected(null);
       setContracts([]);
+      setFilter("");
+      setModal("");
+      setNotice("");
+      setSkills([]);
+      setArtifacts([]);
+      setTicket(null);
+      setLocalMails([]);
       setLocal({ messages: [], draft: "" });
       setJob(null);
       setCsrf("");
@@ -376,10 +532,11 @@ function App() {
     .reduce<Record<string, Contract[]>>((result, c) => {
       (result[c.company] ||= []).push(c);
       return result;
-    }, {});
+    }, Object.create(null));
   const running = activeStates.includes(job?.state || "");
   const rows = job?.result?.rows || [];
   const terminal = job && !running;
+  const demoMode = !config?.model_mode || config.model_mode === "demo";
 
   if (!user)
     return (
@@ -392,8 +549,10 @@ function App() {
     );
   return (
     <div className={"app " + (!sidebar ? "collapsed" : "")}>
+      {compact && sidebar && <button tabIndex={-1} type="button" className="drawer-scrim" aria-label="收起导航" onClick={closeDrawer} />}
       {sidebar && (
-        <aside className="sidebar">
+        <aside className="sidebar" id="workspace-nav" aria-label="工作台导航"
+          onKeyDown={event => { if (event.key === "Escape" && !modal) closeDrawer(); }}>
           <div className="brand">
             <div className="brand-mark">
               <FileCheck2 size={22} />
@@ -401,17 +560,17 @@ function App() {
             <span>
               Clause<span className="brand-sub">合同审查工作台</span>
             </span>
+            {compact && <button className="drawer-close" aria-label="关闭侧栏" onClick={closeDrawer} ref={drawerClose}><X size={18}/></button>}
           </div>
-          <button
-            className="new-contract"
-            onClick={() => fileInput.current?.click()}
-            disabled={user.role === "admin" || busy}
-          >
-            <Plus size={17} /> 添加合同 <span>⌘ N</span>
+          <button className={"desk-link" + (!selected ? " current" : "")} onClick={showDesk} aria-current={!selected ? "page" : undefined}>
+            {user.role === "legal" ? <LayoutDashboard size={17}/> : <LibraryBig size={17}/>}
+            {user.role === "legal" ? "工作台首页" : "合同档案总览"}
+            <ChevronRight size={14}/>
           </button>
-          {user.role === "legal" && <button className="new-chat" onClick={() => {
-            ++generation.current; selectedRef.current = ""; setSelected(null); setJob(null); setGeneral(true);
-          }}><Plus size={15}/> 返回自由对话</button>}
+          <div className="sidebar-title">
+            <span>合同档案 <small lang="en">Files</small></span>
+            <span className="file-count">{contracts.length}</span>
+          </div>
           <div className="search">
             <Search size={15} />
             <input
@@ -421,11 +580,7 @@ function App() {
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
-          <div className="sidebar-title">
-            {user.role === "admin" ? "全部合同 · 输入与输出" : "合同与历史记录"}{" "}
-            <span>{contracts.length}</span>
-          </div>
-          <nav className="contract-list">
+          <nav className="contract-list" aria-label="合同与历史记录">
             {Object.entries(groups).map(([company, items]) => (
               <div className="company" key={company}>
                 <div className="company-name">
@@ -434,11 +589,14 @@ function App() {
                 </div>
                 {items.map((c) => (
                   <div key={c.id}>
+                    <div className="history-row">
                     <button
                       className={
                         "contract " + (selected?.id === c.id ? "selected" : "")
                       }
                       onClick={() => selectContract(c)}
+                      title={c.name}
+                      aria-current={selected?.id === c.id ? "page" : undefined}
                     >
                       <FileText size={15} />
                       <span>
@@ -450,17 +608,31 @@ function App() {
                         </small>
                       </span>
                     </button>
+                    {user.role === "legal" && (
+                      <button className="history-delete" disabled={busy}
+                        aria-label={`删除合同 ${c.name}`} title="删除合同"
+                        onClick={() => askToDelete({ kind: "contract", id: c.id, name: c.name })}>
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                    </div>
                     {selected?.id === c.id && jobs.length > 0 && (
                       <div className="job-list">
                         {jobs.map((j) => (
+                          <div className="history-row" key={j.id}>
                           <button
-                            key={j.id}
                             className={job?.id === j.id ? "current" : ""}
-                            onClick={() => openJob(j.id).catch(fail)}
+                            onClick={() => { closeDrawer(); setGeneral(false); openJob(j.id).catch(fail); }}
                           >
                             <Circle size={7} />
                             <span>{j.instruction || "标准合同审查"}</span>
                           </button>
+                          <button className="history-delete" disabled={busy}
+                            aria-label={`删除审查记录 ${j.instruction || "标准合同审查"}`} title="删除审查记录"
+                            onClick={() => askToDelete({ kind: "job", id: j.id, name: j.instruction || "标准合同审查" })}>
+                            <Trash2 size={14} />
+                          </button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -468,9 +640,9 @@ function App() {
                 ))}
               </div>
             ))}
-            {!contracts.length && (
+            {!Object.keys(groups).length && (
               <p className="quiet sidebar-empty">
-                添加合同后，将在这里按公司整理。
+                {filter.trim() ? "没有匹配的合同" : "暂无合同档案"}
               </p>
             )}
           </nav>
@@ -509,11 +681,14 @@ function App() {
           </div>
         </aside>
       )}
-      <main className="workspace">
+      <main className="workspace" inert={compact && sidebar}>
         <header>
           <button
             className="icon-button"
             aria-label="切换侧栏"
+            aria-expanded={sidebar}
+            aria-controls={sidebar ? "workspace-nav" : undefined}
+            ref={sidebarToggle}
             onClick={() => setSidebar(!sidebar)}
           >
             <PanelLeft size={18} />
@@ -521,24 +696,46 @@ function App() {
           <div className="breadcrumb">
             {selected ? (
               <>
-                <span>{selected.company}</span>
+                <button onClick={showDesk}>合同档案</button>
                 <ChevronRight size={14} />
                 <strong>{selected.name}</strong>
               </>
             ) : (
-              <strong>工作空间</strong>
+              <><LibraryBig size={16} /><strong>{user.role === "admin" ? "合同档案" : "法务工作台"}</strong></>
             )}
           </div>
-          <span
-            className={"mode " + (config?.model_mode === "tacc" ? "live" : "")}
-          >
-            <span />{" "}
-            {config?.model_mode === "tacc" ? "Qwen · TACC" : "演示模式"}
-          </span>
+          {canSelectModel ? (
+            <label className="mode live ollama-selector">
+              <span aria-hidden="true" />
+              <select aria-label="选择对话与审查模型" value={selectedModelOption}
+                onChange={(event) => chooseModel(event.target.value, user.id)}>
+                {config.model_mode === "ollama" && (
+                  <option value="">{modelLabel("ollama", config.model_name)}</option>
+                )}
+                {ollamaModel && !ollamaModels?.includes(ollamaModel) && (
+                  <option value={`ollama:${ollamaModel}`}>{modelLabel("ollama", ollamaModel)}{ollamaModels && "（不可用）"}</option>
+                )}
+                {ollamaModels?.filter((name) => name !== config.model_name || name === ollamaModel).map((name) => (
+                  <option key={name} value={`ollama:${name}`}>{modelLabel("ollama", name)}</option>
+                ))}
+                <option value="tacc" disabled={!config.tacc_configured}>
+                  {modelLabel("tacc")}{!config.tacc_configured && "（连接未配置）"}
+                </option>
+                {!ollamaModels?.length && (
+                  <option disabled>{ollamaModelsError || (ollamaModels ? "暂无已安装的对话模型" : "正在读取模型列表…")}</option>
+                )}
+              </select>
+            </label>
+          ) : (
+            <span className={"mode " + (demoMode ? "" : "live")}>
+              <span /> {modelLabel(config?.model_mode, config?.model_name)}
+            </span>
+          )}
           {user.role === "legal" && (
             <button
               className="top-upload"
               onClick={() => fileInput.current?.click()}
+              disabled={busy}
             >
               <Plus size={15} /> 添加合同
             </button>
@@ -558,138 +755,111 @@ function App() {
         {error && (
           <div className="alert" role="alert">
             {error}
-            <button onClick={() => setError("")}>
+            <button aria-label="关闭错误提示" onClick={() => setError("")}>
               <X size={15} />
             </button>
           </div>
         )}
         {notice && (
-          <div className="notice">
+          <div className="notice" role="status">
             {notice}
-            <button onClick={() => setNotice("")}>
+            <button aria-label="关闭通知" onClick={() => setNotice("")}>
               <X size={15} />
             </button>
           </div>
         )}
         {!selected && user.role === "legal" ? (
-          <AssistantChat key={user.id + ":general"} userId={user.id} demo={config?.model_mode !== "tacc"}
+          <AssistantChat key={user.id + ":general"} userId={user.id} demo={demoMode}
+            deskVisit={deskVisit}
+            deskContracts={contracts} onOpenContract={id => {
+              const contract = contracts.find(item => item.id === id);
+              if (contract) selectContract(contract);
+            }}
+            onUpload={() => { if (!busy) fileInput.current?.click(); }}
+            onOpenSkills={() => setModal("skills")}
+            modelMode={requestedMode} ollamaModel={ollamaModel}
             onSkillsChanged={refreshSkills} onReview={openAgentReview}/>
         ) : !selected ? (
-          <div className="welcome">
-            <div className="welcome-icon">
-              <FileCheck2 size={34} />
+          <section className="archive-view" aria-labelledby="archive-title">
+            <div className="archive-heading">
+              <div>
+                <span className="eyebrow" lang="en">Document archive</span>
+                <h1 id="archive-title">合同档案总览</h1>
+                <p>按合同查阅原件与最终审查报告。</p>
+              </div>
+              <LibraryBig size={40} strokeWidth={1.2} aria-hidden="true"/>
             </div>
-            <span className="eyebrow">CONTRACT REVIEW</span>
-            <h1>
-              {user.role === "admin"
-                ? "所有合同，清晰可查。"
-                : "让每一个判断，都有依据。"}
-            </h1>
-            <p>
-              {user.role === "admin"
-                ? "从左侧选择合同，查看原件与最终审查报告。"
-                : "添加一份合同，选择审查范围。条款、证据与结果会在同一个工作空间呈现。"}
-            </p>
-            {user.role === "legal" && (
-              <>
-                <button
-                  className="primary"
-                  onClick={() => fileInput.current?.click()}
-                >
-                  <Plus size={18} /> 添加第一份合同
+            <div className="archive-register">
+              <div className="register-head"><h2>归档合同</h2><span>{contracts.length} 份合同</span></div>
+              {Object.values(groups).flat().map(contract => (
+                <button className="archive-file" key={contract.id} onClick={() => selectContract(contract)}>
+                  <FileText size={20} />
+                  <span><strong>{contract.name}</strong><small>{contract.company} · {contract.owner_email}</small></span>
+                  <time dateTime={new Date(contract.created * 1000).toISOString()}>{new Date(contract.created * 1000).toLocaleDateString("zh-CN")}</time>
+                  <ChevronRight size={16}/>
                 </button>
-                <div className="sample-link">
-                  <a href="/api/demo/sample">
-                    <Download size={14} /> 下载示例合同
-                  </a>
-                  <span>PDF / Word / TXT · 最大 12 MB</span>
-                </div>
-                <div className="welcome-cards">
-                  <div>
-                    <FileText size={20} />
-                    <b>原文可追溯</b>
-                    <p>每条证据都能定位回合同段落</p>
-                  </div>
-                  <div>
-                    <Settings2 size={20} />
-                    <b>按你的清单审查</b>
-                    <p>保存 Skill，下次继续使用</p>
-                  </div>
-                  <div>
-                    <Mail size={20} />
-                    <b>网页与邮箱同步</b>
-                    <p>处理结果统一归档</p>
-                  </div>
-                </div>
-              </>
-            )}
+              ))}
+              {!Object.keys(groups).length && <p className="archive-empty">{filter ? "没有匹配的合同" : "暂无归档合同"}</p>}
+            </div>
+          </section>
+        ) : fileState !== "ready" ? (
+          <div className="archive-load" role="status">
+            {fileState === "loading"
+              ? <><LoaderCircle className="spin" size={20}/> 正在打开合同档案…</>
+              : <><FileText size={20}/> 无法打开合同档案
+                <button className="secondary" onClick={() => selectContract(selected)}>重新打开</button></>}
           </div>
         ) : user.role === "admin" ? (
-          <div className="admin-body">
-            <h2>{selected.name}</h2>
-            <p className="quiet">
-              {selected.owner_email} · {selected.company}
-            </p>
-            <div className="artifact-grid">
-              {artifacts.map((f) => (
-                <a key={f.id} className="artifact" href={fileUrl(f.id, true)}>
-                  <FileText size={26} />
-                  <div>
-                    <small>
-                      {f.kind === "input" ? "合同原件" : "最终审查报告"}
-                    </small>
-                    <strong>{f.name}</strong>
-                    <span>{new Date(f.created * 1000).toLocaleString()}</span>
-                  </div>
-                  <Download size={18} />
+          <section className="archive-view">
+            <div className="archive-heading">
+              <div><span className="eyebrow" lang="en">Contract file</span>
+                <h1>{selected.name}</h1><p>{selected.company} · {selected.owner_email}</p>
+              </div>
+            </div>
+            <div className="archive-register">
+              <div className="register-head"><h2>文件目录</h2><span>{artifacts.length} 份文件</span></div>
+              {artifacts.map(f => (
+                <a key={f.id} className="archive-file" href={fileUrl(f.id, true)}>
+                  {f.kind === "input" ? <FileText size={21}/> : <FileCheck2 size={21}/>}
+                  <span><strong>{f.name}</strong><small>{f.kind === "input" ? "合同原件" : "最终审查报告"}</small></span>
+                  <time dateTime={new Date(f.created * 1000).toISOString()}>{new Date(f.created * 1000).toLocaleDateString("zh-CN")}</time>
+                  <Download size={16}/>
                 </a>
               ))}
             </div>
-          </div>
+          </section>
         ) : (
-          <div className="panels">
+          <ReviewPanes key={selected.id}>
             <section className="chat-panel">
-              <div className="chat-mode-tabs">
-                <button className={general ? "active" : ""} onClick={() => setGeneral(true)}>自由对话与工具</button>
-                <button className={!general ? "active" : ""} onClick={() => setGeneral(false)}>合同审查</button>
+              <div className="chat-mode-tabs" role="group" aria-label="合同处理方式">
+                <button aria-pressed={!general} className={!general ? "active" : ""} onClick={() => setGeneral(false)}>合同审查</button>
+                <button aria-pressed={general} className={general ? "active" : ""} onClick={() => setGeneral(true)}>自由对话与工具</button>
               </div>
               {general ? <AssistantChat key={user.id + ":" + selected.id} userId={user.id} contractId={selected.id}
-                demo={config?.model_mode !== "tacc"} onSkillsChanged={refreshSkills} onReview={openAgentReview}/> : <>
-              <div className="panel-heading">
-                <span>
-                  <Sparkles size={16} /> 合同审查
-                </span>
-                <button
-                  onClick={() => setModal("company")}
-                  title="修改公司归类"
-                >
-                  <Folder size={15} />
-                </button>
-              </div>
+                demo={demoMode} modelMode={requestedMode} ollamaModel={ollamaModel}
+                onSkillsChanged={refreshSkills} onReview={openAgentReview}/> : <>
               <div className="chat-scroll">
-                <div className="contract-card">
-                  <div className="file-symbol">
-                    <FileText size={23} />
+                <header className="matter-cover">
+                  <div className="matter-cover-heading">
+                    <span lang="en"><FileText size={15} aria-hidden="true" /> Contract file</span>
+                    <a aria-label="下载原件" title="下载原件" href={fileUrl(selected.file_id, true)}>
+                      <Download size={16} />
+                    </a>
                   </div>
-                  <div>
-                    <strong>{selected.name}</strong>
-                    <span>{selected.company} · 原件已保存</span>
+                  <h1>{selected.name}</h1>
+                  <div className="matter-file-meta">
+                    <button onClick={() => setModal("company")} aria-label="修改公司归类" title="修改公司归类">
+                      <Folder size={13} /> {selected.company} <Pencil size={11} />
+                    </button>
+                    <time dateTime={new Date(selected.created * 1000).toISOString()}>
+                      {new Date(selected.created * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                    </time>
                   </div>
-                  <a
-                    aria-label="下载原件"
-                    href={fileUrl(selected.file_id, true)}
-                  >
-                    <Download size={17} />
-                  </a>
-                </div>
+                </header>
                 {!local.messages.length && !job && (
                   <div className="assistant-intro">
-                    <div className="assistant-name">
-                      <div className="small-logo">C</div> Clause
-                    </div>
-                    <p>
-                      合同已就绪。你可以进行八类标准审查，或直接提出关注的问题。
-                    </p>
+                    <h2>选择审查范围</h2>
+                    <p>选用标准审查或指定条款，也可在下方输入要求。</p>
                     <div className="suggestions">
                       {[
                         "进行标准合同审查",
@@ -735,17 +905,18 @@ function App() {
                     <div className="assistant-name">
                       <div className="small-logo">C</div> Clause{" "}
                       <span>
-                        {config?.model_mode === "tacc"
-                          ? "Qwen"
-                          : "本地规则演示"}
+                        {modelLabel(job.result?.model_mode || job.model_mode || config?.model_mode,
+                          job.result?.model_name || job.model_name || config?.model_name)}
                       </span>
                     </div>
                     <div className="trace">
                       <div className="trace-heading">
                         {running ? (
                           <LoaderCircle size={15} className="spin" />
-                        ) : (
+                        ) : job.state === "completed" ? (
                           <Check size={15} />
+                        ) : (
+                          <Circle size={13} />
                         )}
                         <b>{statusLabel[job.state] || job.state}</b>
                         <span>
@@ -753,7 +924,7 @@ function App() {
                         </span>
                       </div>
                       <details open={running}>
-                        <summary>{events.length} 条处理记录</summary>
+                        <summary>处理记录 · {events.length} 条</summary>
                         <div className="trace-list">
                           {events.map((e) => (
                             <div key={e.id}>
@@ -797,9 +968,10 @@ function App() {
                         <p className="result-summary">
                           {job.result.message ||
                             (rows.length
-                              ? "已完成 " +
-                                rows.length +
-                                " 类条款检查，引用与清单判断见右侧。"
+                              ? <>
+                                <span className="wide-summary">已完成 {rows.length} 类条款检查，引用与清单判断见右侧。</span>
+                                <span className="compact-summary">已完成 {rows.length} 类条款检查。可在「审查底稿」查看引文与清单判断。</span>
+                              </>
                               : "处理已结束。")}
                         </p>
                         <div className="summary-chips">
@@ -920,6 +1092,7 @@ function App() {
                       ) : (
                         <ArrowUp size={19} />
                       )}
+                      <span>开始审查</span>
                     </button>
                   </div>
                 </div>
@@ -930,7 +1103,7 @@ function App() {
               </>}
             </section>
             <section className="document-panel">
-              <div className="document-tabs">
+              <div className="document-tabs" role="group" aria-label="审查底稿视图">
                 {[
                   ["risk", "风险表"],
                   ["text", "原文证据"],
@@ -939,6 +1112,7 @@ function App() {
                 ].map(([key, label]) => (
                   <button
                     key={key}
+                    aria-pressed={tab === key}
                     className={tab === key ? "active" : ""}
                     onClick={() => setTab(key)}
                   >
@@ -950,17 +1124,16 @@ function App() {
                 {tab === "risk" && (
                   <>
                     <div className="document-title">
-                      <span className="eyebrow">REVIEW FINDINGS</span>
-                      <h2>合同风险与证据</h2>
-                      <p>按所选审计清单标注 · 示例规则 v1</p>
+                      <h2 lang="en">Review findings</h2>
+                      <p>合同风险与证据{rows.length > 0 && ` · ${rows.length} 项条款`}</p>
                     </div>
                     {!rows.length ? (
                       <div className="empty-state">
-                        <FileCheck2 size={32} />
+                        <div className="empty-folio" aria-hidden="true"><FileCheck2 size={30} strokeWidth={1.4} /></div>
                         <p>
                           {running
-                            ? "正在读取合同，审查结果即将呈现。"
-                            : "开始审查后，在这里查看风险表。"}
+                            ? statusLabel[job!.state] || "审查处理中"
+                            : job?.error || job?.result?.message || "提交审查后，可在这里逐条核对判断与原文。"}
                         </p>
                       </div>
                     ) : (
@@ -988,21 +1161,30 @@ function App() {
                             {row.finding && (
                               <p className="finding">{row.finding}</p>
                             )}
-                            <p>{row.explanation}</p>
-                            {row.evidence.map((e, index) => (
-                              <button
-                                className="quote"
-                                key={index}
-                                onClick={() => evidence(e)}
-                              >
-                                <span>
-                                  {e.paragraph_id}
-                                  {e.page ? " · 第 " + e.page + " 页" : ""}
-                                  <ExternalLink size={12} />
-                                </span>
-                                <q>{e.quote}</q>
-                              </button>
-                            ))}
+                            {row.explanation && <p>{row.explanation}</p>}
+                            {row.evidence.map((e, index) => {
+                              const sourceLabel = e.retrieval_sources
+                                ?.filter((source) => source !== "survey")
+                                .map((source) => retrievalSourceLabels[source])
+                                .join(" + ");
+                              return (
+                                <button
+                                  className="quote"
+                                  key={index}
+                                  onClick={() => evidence(e)}
+                                >
+                                  <span>
+                                    <b className="reference-id">{e.paragraph_id}</b>
+                                    {e.page ? " · 第 " + e.page + " 页" : ""}
+                                    {sourceLabel && (
+                                      <span className="quote-source">{sourceLabel}</span>
+                                    )}
+                                    <ChevronRight size={14} className="quote-arrow" aria-hidden="true" />
+                                  </span>
+                                  <q>{e.quote}</q>
+                                </button>
+                              );
+                            })}
                             {row.status === "not_found" && (
                               <div className="not-found">
                                 本次未检出对应原文
@@ -1010,6 +1192,19 @@ function App() {
                             )}
                             {row.missing.length > 0 && (
                               <small>待确认 · {row.missing.join(" / ")}</small>
+                            )}
+                            {!!row.checklist?.length && (
+                              <details className="audit-checklist">
+                                <summary>审计核对项 · {row.checklist.length} 项</summary>
+                                <dl>
+                                  {row.checklist.map((item, index) => (
+                                    <div key={index}>
+                                      <dt>{item.requirement}</dt>
+                                      <dd>{item.assessment}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              </details>
                             )}
                           </article>
                         ))}
@@ -1020,10 +1215,9 @@ function App() {
                 {tab === "text" && (
                   <>
                     <div className="document-title">
-                      <span className="eyebrow">SOURCE EVIDENCE</span>
-                      <h2>合同正文</h2>
+                      <h2 lang="en">Source evidence</h2>
                       <p>
-                        {paragraphs.length} 个稳定段落 · 点击风险表引用可定位
+                        合同正文 · {paragraphs.length} 个段落
                       </p>
                     </div>
                     {paragraphs.length === 0 && (
@@ -1087,9 +1281,8 @@ function App() {
                 {tab === "edit" && (
                   <>
                     <div className="document-title">
-                      <span className="eyebrow">REPORT EDITOR</span>
-                      <h2>编辑审查报告</h2>
-                      <p>保存会生成一份独立的个人编辑稿。</p>
+                      <h2 lang="en">Report draft</h2>
+                      <p>编辑审查报告 · 保存为个人 Word 编辑稿</p>
                     </div>
                     <textarea
                       className="report-editor"
@@ -1131,19 +1324,40 @@ function App() {
                 )}
               </div>
             </section>
-          </div>
+          </ReviewPanes>
         )}
       </main>
       {modal && (
-        <div className="modal-backdrop" onClick={() => setModal("")}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <dialog ref={modalRef} className="work-dialog"
+          onCancel={event => { if (deleting) event.preventDefault(); else setModal(""); }}
+          aria-label={{skills: "我的 Skills", mail: "邮件处理", company: "合同归类", delete: "确认删除历史记录"}[modal]}
+          onClick={event => { if (!deleting && event.target === event.currentTarget) setModal(""); }}>
+          <div className="modal">
             <button
               className="modal-close"
               aria-label="关闭"
+              disabled={deleting}
               onClick={() => setModal("")}
             >
               <X size={20} />
             </button>
+            {modal === "delete" && historyTarget && (
+              <>
+                <h2>{historyTarget.kind === "contract" ? "删除合同" : "删除审查记录"}</h2>
+                <p className="delete-item">{historyTarget.name}</p>
+                <p className="quiet">{historyTarget.kind === "contract"
+                  ? "合同原件、关联审查记录、报告和合同对话将从工作台删除。此操作无法撤销。"
+                  : "这次审查的结果、处理记录、报告和编辑稿将被删除。此操作无法撤销。"}</p>
+                {deleteError && <p className="error-text" role="alert">{deleteError}</p>}
+                <div className="delete-actions">
+                  <button className="secondary" autoFocus disabled={deleting} onClick={() => setModal("")}>取消</button>
+                  <button className="primary danger" disabled={deleting} onClick={deleteSelectedHistory}>
+                    {deleting ? <LoaderCircle className="spin" size={15}/> : <Trash2 size={15}/>}
+                    {deleting ? "正在删除…" : "确认删除"}
+                  </button>
+                </div>
+              </>
+            )}
             {modal === "company" && (
               <CompanyForm
                 value={selected?.company || ""}
@@ -1264,7 +1478,7 @@ function App() {
               </>
             )}
           </div>
-        </div>
+        </dialog>
       )}
     </div>
   );
@@ -1310,37 +1524,29 @@ function LoginPage({
     }
   }
   return (
-    <div className="login-page">
-      <div className="login-story">
-        <div className="brand">
-          <div className="brand-mark">
-            <FileCheck2 size={23} />
-          </div>
-          <span>Clause</span>
+    <main className="entry-page">
+      <section className="entry-cover" aria-labelledby="entry-title">
+        <img className="entry-architecture" src="/images/chambers.webp" alt="" />
+        <div className="entry-brand">
+          <FileCheck2 size={27} strokeWidth={1.6} aria-hidden="true" />
+          <span lang="en">Clause</span>
         </div>
-        <div>
-          <span className="eyebrow">YOUR CONTRACT WORKSPACE</span>
-          <h1>
-            从合同原文，
-            <br />
-            到有据可查的判断。
-          </h1>
-          <p>
-            为法务团队构建的合同审查工作台。
-            <br />
-            集中管理合同、审查清单和每一次处理结果。
+        <div className="entry-cover-title">
+          <h1 id="entry-title" lang="en">Contract<br /> Review<span>.</span></h1>
+          <p>合同审查与证据核验</p>
+        </div>
+        <div className="entry-cover-footer">
+          <span>CSIT6000V</span>
+          <span lang="en">Course Project</span>
+        </div>
+      </section>
+      <section className="entry-form-wrap" aria-labelledby="entry-form-title">
+        <form className="entry-form" onSubmit={submit}>
+          <p className="entry-section-label" lang="en">{register ? "Registration" : "Workspace access"}</p>
+          <h2 id="entry-form-title">{register ? "创建法务账户" : "登录工作空间"}</h2>
+          <p className="entry-form-intro">
+            {register ? "使用邮箱验证码开通你的法务工作空间。" : "使用你的邮箱访问合同、审查清单与报告。"}
           </p>
-          <div className="login-proof">
-            <ShieldCheck size={18} /> 账户隔离 <span /> 原文证据 <span />{" "}
-            审查留痕
-          </div>
-        </div>
-        <small>Contract Review Agent · Course Project</small>
-      </div>
-      <div className="login-form-wrap">
-        <form className="login-form" onSubmit={submit}>
-          <h2>{register ? "创建法务账户" : "登录工作空间"}</h2>
-          <p>使用你的邮箱继续</p>
           <label>
             邮箱
             <input
@@ -1349,6 +1555,7 @@ function LoginPage({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
+              placeholder="name@company.com"
             />
           </label>
           <label>
@@ -1360,13 +1567,17 @@ function LoginPage({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={register ? "new-password" : "current-password"}
+              placeholder={register ? "至少 10 个字符" : "输入密码"}
             />
           </label>
           {register && (
-            <label>
-              邮箱验证码
-              <div className="code-line">
+            <div className="entry-code">
+              <label htmlFor="entry-code">邮箱验证码</label>
+              <div className="entry-code-line">
                 <input
+                  id="entry-code"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                   required
@@ -1391,21 +1602,21 @@ function LoginPage({
                   发送验证码
                 </button>
               </div>
-            </label>
+            </div>
           )}
           {error && (
             <div className="form-error" role="alert">
               {error}
             </div>
           )}
-          {info && <div className="form-info">{info}</div>}
-          <button className="primary full" disabled={busy}>
+          {info && <div className="form-info" role="status">{info}</div>}
+          <button className="entry-submit" disabled={busy}>
             {busy ? "请稍候…" : register ? "注册" : "登录"}
             <ChevronRight size={17} />
           </button>
           <button
             type="button"
-            className="text-button full"
+            className="entry-switch"
             onClick={() => {
               setRegister(!register);
               setError("");
@@ -1415,9 +1626,9 @@ function LoginPage({
             {register ? "已有账户？返回登录" : "使用邮箱验证码注册"}
           </button>
           {config?.demo && (
-            <div className="demo-accounts">
-              <span>本地演示账号</span>
-              <div>
+            <div className="entry-demo">
+              <div className="entry-demo-title"><ShieldCheck size={15} aria-hidden="true" />本地演示账号</div>
+              <div className="entry-demo-options">
                 {[
                   ["法务", "legal@example.com", "LegalDemo2026!"],
                   ["另一法务", "other@example.com", "OtherDemo2026!"],
@@ -1426,6 +1637,7 @@ function LoginPage({
                   <button
                     type="button"
                     key={label}
+                    aria-pressed={!register && email === address}
                     onClick={() => {
                       setEmail(address);
                       setPassword(pass);
@@ -1436,12 +1648,12 @@ function LoginPage({
                   </button>
                 ))}
               </div>
-              <small>演示模式使用本地规则和发件箱。</small>
+              <small>本地演示发件箱 · {modelLabel(config.model_mode, config.model_name)}</small>
             </div>
           )}
         </form>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
 
@@ -1495,6 +1707,11 @@ function SkillForm({
     [checks, setChecks] = useState<Record<string, string>>({}),
     [policy, setPolicy] = useState("supplier-demo@1"),
     [error, setError] = useState("");
+  const standardCategories: { id: string; label: string }[] = config?.categories || [];
+  const editingLegacySkill = skills.find((skill) => skill.id === id)?.categories?.includes("liquidated_damages");
+  const categoryOptions = editingLegacySkill
+    ? [...standardCategories, { id: "liquidated_damages", label: "约定赔偿（旧版模板）" }]
+    : standardCategories;
   async function save(event: React.FormEvent) {
     event.preventDefault();
     try {
@@ -1569,7 +1786,7 @@ function SkillForm({
         />
       </label>
       <div className="category-options">
-        {config?.categories.map((c: any) => (
+        {categoryOptions.map((c) => (
           <label key={c.id}>
             <input
               type="checkbox"
@@ -1588,9 +1805,9 @@ function SkillForm({
       </div>
       <details>
         <summary>自定义每类核对项</summary>
-        {config?.categories
-          .filter((item: { id: string }) => categories.includes(item.id))
-          .map((item: { id: string; label: string }) => (
+        {categoryOptions
+          .filter((item) => categories.includes(item.id))
+          .map((item) => (
             <label key={item.id}>
               {item.label}
               <input

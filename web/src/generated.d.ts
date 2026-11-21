@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ollama/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ollama Models */
+        get: operations["ollama_models_api_ollama_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/assistant/runs": {
         parameters: {
             query?: never;
@@ -185,7 +202,8 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Remove Contract */
+        delete: operations["remove_contract_api_contracts__contract_id__delete"];
         options?: never;
         head?: never;
         /** Classify */
@@ -238,7 +256,8 @@ export interface paths {
         get: operations["get_job_api_jobs__job_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Remove Job */
+        delete: operations["remove_job_api_jobs__job_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -488,6 +507,17 @@ export interface components {
              * @default true
              */
             allow_web: boolean;
+            /**
+             * Model Mode
+             * @default
+             * @enum {string}
+             */
+            model_mode: "" | "ollama" | "tacc";
+            /**
+             * Ollama Model
+             * @default
+             */
+            ollama_model: string;
         };
         /** Body_demo_mail_api_demo_mail_post */
         Body_demo_mail_api_demo_mail_post: {
@@ -575,6 +605,8 @@ export interface components {
             quote: string;
             /** Page */
             page?: number | null;
+            /** Retrieval Sources */
+            retrieval_sources?: ("keyword" | "vector" | "survey" | "fallback" | "adjacent")[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -600,6 +632,17 @@ export interface components {
             parent_id: string;
             /** Request Key */
             request_key: string;
+            /**
+             * Model Mode
+             * @default
+             * @enum {string}
+             */
+            model_mode: "" | "ollama" | "tacc";
+            /**
+             * Ollama Model
+             * @default
+             */
+            ollama_model: string;
         };
         /** JobView */
         JobView: {
@@ -630,6 +673,16 @@ export interface components {
              * @default
              */
             delivery: string;
+            /**
+             * Model Mode
+             * @default
+             */
+            model_mode: string;
+            /**
+             * Model Name
+             * @default
+             */
+            model_name: string;
         };
         /** LoginInput */
         LoginInput: {
@@ -677,6 +730,11 @@ export interface components {
              * @default
              */
             model_mode: string;
+            /**
+             * Model Name
+             * @default
+             */
+            model_name: string;
             /**
              * Tacc Client Job
              * @default
@@ -735,7 +793,7 @@ export interface components {
             /** Name */
             name: string;
             /** Categories */
-            categories: string[];
+            categories: ("termination" | "liability_cap" | "governing_law" | "automatic_renewal" | "audit_rights" | "assignment" | "insurance" | "agreement_date" | "liquidated_damages")[];
             /**
              * Focus
              * @default
@@ -812,6 +870,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    ollama_models_api_ollama_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
         };
@@ -1072,6 +1150,37 @@ export interface operations {
             };
         };
     };
+    remove_contract_api_contracts__contract_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                contract_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     classify_api_contracts__contract_id__patch: {
         parameters: {
             query?: never;
@@ -1222,6 +1331,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_job_api_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -4,15 +4,25 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
+import sys
 import time
 import uuid
+from contextlib import closing, contextmanager
 
 from .config import ROOT, settings
 
 
 JOB_ID = re.compile(r"Submitted batch job (\d+)")
 SERVICE_URL = re.compile(r"^SERVICE_BASE_URL=(http://[A-Za-z0-9.-]+:[0-9]{1,5}/v1)[ \r]*$", re.M)
+SERVICE_RECHECK_SECONDS = 15
+
+
+def sdk_executable():
+    if os.name == "nt":
+        return shutil.which("wsl.exe")
+    return shutil.which("tcloud", path=os.path.dirname(sys.executable)) or shutil.which("tcloud")
 
 
 def _sdk_once(arguments, cwd=None, timeout=180):
@@ -27,7 +37,8 @@ def _sdk_once(arguments, cwd=None, timeout=180):
             script = "cd " + shlex.quote(linux_path) + " && " + script
         command = ["wsl.exe", "--", "bash", "-lic", script]
     else:
-        command = ["tcloud", *arguments]
+        executable = sdk_executable() or "tcloud"
+        command = [executable, *arguments]
     process = subprocess.run(command, cwd=cwd, capture_output=True, timeout=timeout)
     output = process.stdout.replace(b"\0", b"").decode("utf-8", errors="replace")
     diagnostics = process.stderr.replace(b"\0", b"").decode("utf-8", errors="replace")
@@ -99,6 +110,16 @@ def save_service(record):
     os.replace(temporary, path)
 
 
+@contextmanager
+def service_lock():
+    # Serialize SDK submissions across the chat worker, review worker and CLI.
+    # Keep the lock separate from the database that serves incoming requests.
+    settings.data.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(settings.data / "tacc-service-lock.db", timeout=300)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        yield
+
+
 def service_log(job_id):
     if not str(job_id).isdigit():
         raise ValueError("Invalid service job ID")
@@ -125,6 +146,106 @@ def submit(cwd):
     if not match:
         raise RuntimeError("TACC SDK 未返回任务编号")
     return match[1]
+
+
+class TaccServicePending(Exception):
+    def __init__(self, job_id):
+        self.job_id = job_id
+        super().__init__("等待学校 GPU 集群启动 Qwen")
+
+
+class TaccServiceError(RuntimeError):
+    @property
+    def public_message(self):
+        return str(self)
+
+
+def service_job_active(job_id):
+    if not str(job_id).isdigit():
+        raise ValueError("Invalid service job ID")
+    try:
+        status = sdk(["ps", "-j", str(job_id)], timeout=15)
+    except TaccSDKError as exc:
+        if exc.code != "job_missing":
+            raise
+        return False
+    return bool(re.search(r"\b" + str(job_id) + r"\b", status))
+
+
+def _submit_service(record, cwd=None):
+    if record.get("state") == "submitting" and not record.get("job_id"):
+        raise TaccServiceError("上次 TACC GPU 作业提交结果不确定，请核对集群作业后恢复。")
+    save_service({"state": "submitting", "ready": False})
+    try:
+        job_id = submit(cwd or ROOT / "tacc" / "serve")
+    except FileNotFoundError as exc:
+        save_service(record)
+        raise TaccServiceError("找不到课程 tcloud SDK，请检查工作台主机配置。") from exc
+    now = time.time()
+    record = {"job_id": job_id, "ready": False, "checked_at": now, "submitted_at": now}
+    save_service(record)
+    return record
+
+
+def start_service_job(cwd=None, job_id=None):
+    with service_lock():
+        record = service_record()
+        job_id = job_id or record.get("job_id")
+        if job_id and service_job_active(job_id):
+            if job_id != record.get("job_id"):
+                save_service({"job_id": job_id, "ready": False})
+            return job_id
+        return _submit_service(record, cwd)["job_id"]
+
+
+def inspect_service(job_id):
+    try:
+        log = service_log(job_id)
+    except RuntimeError as exc:
+        if getattr(exc, "code", None) != "file_missing" and "No such file" not in str(exc):
+            raise
+        log = ""
+    if any(marker in log for marker in ("CLAUSE_SERVICE_EXIT", "CLAUSE_STARTUP_FAILURE", "Exited with exit code",
+                                        "CANCELLED", "TIME LIMIT", "Finished server process", "Application shutdown complete")):
+        return {"ready": False, "state": "failed", "base_url": ""}
+    base = SERVICE_URL.search(log)
+    if base and "Application startup complete" in log:
+        return {"ready": True, "state": "ready", "base_url": base[1]}
+    return {"ready": False, "state": "waiting", "base_url": ""}
+
+
+def queued_service_base(checkpoint):
+    if settings.tacc_url:
+        return get_base_url()
+    expected = checkpoint("tacc_service_job") if checkpoint else None
+    with service_lock():
+        record = service_record()
+        job_id = record.get("job_id")
+        if expected and expected != job_id:
+            raise TaccServiceError("等待中的 TACC GPU 作业已被替换，请重新提交请求。")
+        if expected and record.get("state") in {"failed", "stopped"}:
+            raise TaccServiceError("TACC GPU 作业已结束或 Qwen 启动失败，请查看集群作业日志。")
+        now = time.time()
+        if not job_id or now - record.get("checked_at", 0) >= SERVICE_RECHECK_SECONDS:
+            if job_id and service_job_active(job_id):
+                record.update(inspect_service(job_id), checked_at=time.time())
+                save_service(record)
+            elif job_id and now - record.get("submitted_at", 0) < 60:
+                # A newly submitted job can take a short time to appear in status results.
+                record.update(checked_at=time.time())
+                save_service(record)
+            elif expected:
+                record.update(ready=False, state="failed", checked_at=time.time())
+                save_service(record)
+            else:
+                record = _submit_service(record)
+        if record.get("ready"):
+            return get_base_url()
+        if record.get("state") in {"failed", "stopped"}:
+            raise TaccServiceError("TACC GPU 作业已结束或 Qwen 启动失败，请查看集群作业日志。")
+    if checkpoint and not expected:
+        checkpoint("tacc_service_job", record["job_id"])
+    raise TaccServicePending(record["job_id"])
 
 
 def wait_for_result(run, remote_id, event):
@@ -160,7 +281,7 @@ def wait_for_result(run, remote_id, event):
     raise TimeoutError("TACC 客户端等待超时，作业编号 " + remote_id)
 
 
-def run_remote(operation, event, checkpoint=None, **arguments):
+def run_remote(operation, event, checkpoint=None, *, auto_start=False, **arguments):
     saved = checkpoint("tacc_client") if checkpoint else None
     run = saved["run"] if saved else uuid.uuid4().hex
     if saved:
@@ -169,7 +290,7 @@ def run_remote(operation, event, checkpoint=None, **arguments):
         remote_id = saved["job_id"]
         event("queue", "恢复 TACC 客户端任务", remote_id)
     else:
-        base = get_base_url()
+        base = queued_service_base(checkpoint) if auto_start else get_base_url()
         # Submit an isolated folder containing only the query and review engine.
         root = settings.data / "tacc-staging"
         root.mkdir(parents=True, exist_ok=True)

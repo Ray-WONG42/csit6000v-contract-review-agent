@@ -11,10 +11,11 @@ extracts eight standard clause categories or user-defined checks, validates quot
 context when necessary, and creates downloadable Word reports. A general assistant can search
 public information, read HTTPS pages, manage private Skills, read owned contracts and start reviews.
 
-There are two execution modes:
+Set `MODEL_MODE` in `.env` to select an execution mode:
 
 - `MODEL_MODE=demo`: deterministic, offline workflow check. Slash commands execute real local tools;
   ordinary natural-language conversation requires a model and deliberately fails clearly here.
+- `MODEL_MODE=ollama`: local natural-language chat and contract review through Ollama. The default model is `gemma4:12b`.
 - `MODEL_MODE=tacc`: real model planning and extraction. The course SDK route submits a GPU service
   and separate CPU clients. Availability depends on course authorization, queue and GPU memory.
 
@@ -52,7 +53,7 @@ There are no separate agent-role files or agent-to-agent communication claims.
 | Planner | `app/assistant.py`, `prompts/assistant_system.txt` | JSON action selection; 普通聊天或选择下一工具 |
 | Tool Executor | `app/assistant.py`, `app/web_tools.py` | Eight validated, account-scoped tools; 工具参数及权限校验 |
 | Memory | `web/src/storage.ts`, `app/db.py`, worker checkpoints | Browser history + private task recovery; 浏览器会话与服务端任务恢复 |
-| Retriever | `engine.py` | Stable paragraph IDs, semantic sections, lexical BM25 and adjacent expansion |
+| Retriever | `engine.py`, `app/retrieval.py` | Stable paragraph IDs, BM25, optional BGE-M3 / FAISS retrieval, and adjacent expansion |
 | Responder | `engine.py`, `app/assistant.py` | Validate quotes, return sources, create reports; 证据校验与文件输出 |
 | Model transport | `engine.py`, `app/tacc_sdk.py`, `tacc/client/remote.py` | HTTP JSON or authorized course SDK jobs |
 | Harness | `app/worker.py`, `tests/`, `evals/` | Leases, replay, bounded retries, synthetic tests and evaluation |
@@ -75,7 +76,7 @@ See [directory tree and submission manifest](docs/PACKAGING.md), including commi
   Frontend development needs Node 22+ and `npm ci` using `web/package-lock.json`.
 - Real course inference additionally requires Linux/WSL, your own authenticated official `tcloud` SDK,
   access to the course bootstrap and Qwen runtime, and scheduler resources.
-- No embedding model, external knowledge-base import or vector database is required: retrieval is BM25.
+- Demo uses BM25 without an embedding model. Hybrid retrieval uses a per-contract FAISS index in memory.
 - The existing repository's optional CUAD archive uses Git LFS. It is not needed for startup or synthetic
   acceptance tests; do not require users to download it to run the demo. Actual dataset evaluation needs
   its own download, license review and held-out annotations.
@@ -89,7 +90,7 @@ See [directory tree and submission manifest](docs/PACKAGING.md), including commi
 | Course-approved OpenAI-compatible HTTP / vLLM | Transport implemented; supply endpoint/model; not automatically reachable from a laptop |
 | OpenAI / LiteLLM compatible endpoint | Same JSON HTTP transport can be configured technically; not the course acceptance route; not live-validated here |
 | Anthropic native Messages API | Not implemented; cannot use its native URL with this transport |
-| Ollama | No native adapter or installer; OpenAI-compatible endpoint may be adaptable, unverified and not the course route |
+| Ollama | Native local chat API for general chat and contract review |
 
 中文：不要把“协议兼容”理解成“这些服务均已验收”。课程仍以真实 TACC 结果为准。
 
@@ -101,9 +102,8 @@ single concurrency and 55% vLLM memory utilization. This budget does not guarant
 startup checks require at least 14,000 MiB free on each allocated GPU. Shared usage can still change.
 The supervisor terminates this job's server process group when the job ends; it does not kill other users' processes.
 
-Ollama/local model weights are not included or required. Smaller local models do not satisfy this project's
-TACC assessment. Do not download weights into Git. GPU memory requirements depend on the actual model,
-quantization, context and concurrent requests; no local Ollama hardware guarantee is made.
+For Ollama mode, install Ollama and download the model separately. Memory requirements depend on the
+model, quantization and configured context. Keep Ollama model files outside this repository.
 
 中文：本机无需显卡；模型在 TACC 上运行。排队和显存不足属于外部资源条件，不能靠本地安装依赖解决。
 
@@ -148,10 +148,45 @@ Other demo accounts: `other@example.com` / `OtherDemo2026!`, admin `admin@exampl
 These are public local demo credentials, never production credentials. Stop with Ctrl+C in the launcher.
 For database migrations on an existing installation use `python -m alembic upgrade head` inside the venv.
 
+### Optional local model with Ollama
+
+Open Ollama and check `ollama list` for `gemma4:12b`. If the model is missing, run `ollama pull gemma4:12b`.
+Set the following in the project's `.env`:
+
+```dotenv
+APP_DEMO=1
+MODEL_MODE=ollama
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=gemma4:12b
+```
+
+Run `.venv/bin/python scripts/check_connections.py --live` on macOS/Linux, or use the `.venv\Scripts\python.exe`
+interpreter on Windows. A successful response includes `ollama_test: true`. Restart the launcher and refresh
+the workbench. The model selector in the header lists local chat models installed on `OLLAMA_URL`.
+The selected model applies to new chats and reviews and is saved in the current browser for that account.
+`OLLAMA_MODEL` sets the default model. Load new chat models with `ollama pull <model>` and refresh the page.
+`OLLAMA_TIMEOUT`, `OLLAMA_CONTEXT_LIMIT` and `OLLAMA_MAX_OUTPUT_TOKENS` set the timeout and model budgets.
+The same menu offers **Qwen · TACC** when the workbench can use the course SDK. The first request
+submits the Qwen service job if needed. Chat and review requests wait for the scheduler and resume
+when the service is ready. `MODEL_MODE` sets the default backend for the menu.
+
+### Hybrid contract retrieval
+
+In Ollama mode, contract reviews use BM25 and vector search by default. Run `ollama pull bge-m3:latest`
+to install the embedding model if it is missing. `OLLAMA_EMBEDDING_MODEL` and `OLLAMA_EMBEDDING_TIMEOUT`
+configure the embedding call to `OLLAMA_URL`. FAISS searches only the current contract. The report UI
+shows whether BM25, vector search, or both found each matching citation.
+If vector search is unavailable, the review continues with the other candidate sources and records the
+fallback in the job trace. Set `CONTRACT_VECTOR_SEARCH=0` to disable it, or set it to `1` to enable
+it with TACC. The TACC SDK path computes vectors on the application host and passes ranked paragraph IDs
+along with the review request. Demo mode runs offline.
+
 ### Required course path: activate real TACC
 
 The repository does not supply a TACC account, SDK private key or course environment installer.
 First follow the teaching team's SDK/authentication instructions using **your own** account.
+You can use the same authenticated `tcloud` SDK as the course MPI assignment. The contract review
+project includes its own GPU service and CPU client submission files for Qwen.
 On Windows verify `tcloud` from the WSL distribution used by the app:
 
 ```powershell
@@ -173,6 +208,8 @@ TACC_MODEL=qwen3.8-27b
 
 `APP_DEMO=1` keeps the synthetic local login/mail sandbox while model inference is real.
 Leave `TACC_URL`, `LLM_BASE_URL` and keys blank in SDK mode. The service address is discovered from the job log.
+The workbench can queue the service when a TACC request arrives. Use the commands below for manual
+startup and connection diagnostics.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/tacc_service.py start --wait 480
@@ -182,7 +219,7 @@ Leave `TACC_URL`, `LLM_BASE_URL` and keys blank in SDK mode. The service address
 .\.venv\Scripts\python.exe scripts/launch.py
 ```
 
-Linux uses `.venv/bin/python` for the same commands. `start` submits work; it does **not** bypass scheduling.
+Linux and macOS use `.venv/bin/python` for the same commands. `start` submits a job to the scheduler.
 If start times out, inspect the queue and known job before submitting again. `status` may wait for startup.
 `python scripts/tacc_service.py adopt JOB_ID --wait 60` reconnects a verified existing service job.
 Use `python scripts/tacc_service.py stop` when finished. Service lifetime is capped at one hour.
@@ -274,8 +311,8 @@ Tool execution never grants the model another user's permissions. Web/contract t
 3. **SDK timeout but submission may exist.** Inspect queue and log before adopting a verified job ID.
    Do not guess an unrelated user's job. Windows/WSL may hold a staging directory after a timeout.
    Retain the directory until the submitting process exits; do not recursively delete active directories.
-4. **Ollama model not pulled.** Ollama is not part of this course setup; this is not solved by adding a
-   model name to `.env`. Use the required TACC release. No Ollama installation is performed by this project.
+4. **Ollama model missing or unavailable.** Start the local Ollama daemon and check `ollama list` for the
+   configured `OLLAMA_MODEL`. `ollama pull gemma4:12b` downloads the default model if needed.
 5. **Vector database missing / embedding load failed.** This version uses BM25 with no embedding import,
    Chroma, FAISS or external knowledge-base build step. Check the uploaded text instead. Reserved vector
    environment variables cannot enable an unimplemented backend.

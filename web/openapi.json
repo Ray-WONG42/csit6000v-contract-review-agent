@@ -37,6 +37,28 @@
         }
       }
     },
+    "/api/ollama/models": {
+      "get": {
+        "summary": "Ollama Models",
+        "operationId": "ollama_models_api_ollama_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Ollama Models Api Ollama Models Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/assistant/runs": {
       "post": {
         "summary": "Assistant Start",
@@ -355,6 +377,41 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Remove Contract",
+        "operationId": "remove_contract_api_contracts__contract_id__delete",
+        "parameters": [
+          {
+            "name": "contract_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Contract Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/contracts/{contract_id}/paragraphs": {
@@ -507,6 +564,41 @@
                 "schema": {
                   "$ref": "#/components/schemas/JobView"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove Job",
+        "operationId": "remove_job_api_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -1019,6 +1111,22 @@
             "type": "boolean",
             "title": "Allow Web",
             "default": true
+          },
+          "model_mode": {
+            "type": "string",
+            "enum": [
+              "",
+              "ollama",
+              "tacc"
+            ],
+            "title": "Model Mode",
+            "default": ""
+          },
+          "ollama_model": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Ollama Model",
+            "default": ""
           }
         },
         "type": "object",
@@ -1232,6 +1340,20 @@
               }
             ],
             "title": "Page"
+          },
+          "retrieval_sources": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "keyword",
+                "vector",
+                "survey",
+                "fallback",
+                "adjacent"
+              ]
+            },
+            "type": "array",
+            "title": "Retrieval Sources"
           }
         },
         "type": "object",
@@ -1279,6 +1401,22 @@
             "maxLength": 100,
             "minLength": 8,
             "title": "Request Key"
+          },
+          "model_mode": {
+            "type": "string",
+            "enum": [
+              "",
+              "ollama",
+              "tacc"
+            ],
+            "title": "Model Mode",
+            "default": ""
+          },
+          "ollama_model": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Ollama Model",
+            "default": ""
           }
         },
         "type": "object",
@@ -1339,6 +1477,16 @@
           "delivery": {
             "type": "string",
             "title": "Delivery",
+            "default": ""
+          },
+          "model_mode": {
+            "type": "string",
+            "title": "Model Mode",
+            "default": ""
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
             "default": ""
           }
         },
@@ -1454,6 +1602,11 @@
             "title": "Model Mode",
             "default": ""
           },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "default": ""
+          },
           "tacc_client_job": {
             "type": "string",
             "title": "Tacc Client Job",
@@ -1558,7 +1711,18 @@
           },
           "categories": {
             "items": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "termination",
+                "liability_cap",
+                "governing_law",
+                "automatic_renewal",
+                "audit_rights",
+                "assignment",
+                "insurance",
+                "agreement_date",
+                "liquidated_damages"
+              ]
             },
             "type": "array",
             "maxItems": 8,
@@ -1576,6 +1740,19 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "propertyNames": {
+              "enum": [
+                "termination",
+                "liability_cap",
+                "governing_law",
+                "automatic_renewal",
+                "audit_rights",
+                "assignment",
+                "insurance",
+                "agreement_date",
+                "liquidated_damages"
+              ]
             },
             "type": "object",
             "title": "Checks"

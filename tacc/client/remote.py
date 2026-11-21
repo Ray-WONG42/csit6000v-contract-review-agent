@@ -72,7 +72,8 @@ def main():
             result = {"ok": True, "model": module.settings.tacc_model, "calls": model.calls}
         else:
             result = review(request["paragraphs"], request["skill"], request["instruction"], model,
-                            method=request.get("method", "retrieval"), evaluation=request.get("evaluation", False))
+                            method=request.get("method", "retrieval"), evaluation=request.get("evaluation", False),
+                            vector_hits=request.get("vector_hits"))
         envelope = {"result": result, "events": traces, "elapsed": round(time.monotonic() - start, 3)}
     except Exception as exc:
         envelope = {"error": type(exc).__name__, "calls": model.calls}

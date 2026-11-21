@@ -54,3 +54,37 @@ export async function saveLocal(
     transaction.onerror = () => reject(transaction.error);
   });
 }
+
+export async function clearContractHistory(user: string, contract: string) {
+  const reviewKey = user + ":" + contract;
+  const chatKey = user + ":assistant:" + contract;
+  const threadPrefix = chatKey + ":";
+  if (!persistChat) {
+    for (const key of transient.keys()) {
+      if (key === reviewKey || key === chatKey || key.startsWith(threadPrefix)) transient.delete(key);
+    }
+    return;
+  }
+  const db = await open();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction("conversations", "readwrite");
+    const conversations = transaction.objectStore("conversations");
+    conversations.delete(reviewKey);
+    conversations.delete(chatKey);
+    conversations.delete(IDBKeyRange.bound(threadPrefix, chatKey + ";", false, true));
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error);
+  });
+  localStorage.removeItem("assistant-index:" + user + ":" + contract);
+}
+
+export function pruneReviewHistory(saved: LocalConversation, jobIds: Set<string>): LocalConversation {
+  const messages = saved.messages.filter(message => !message.job || jobIds.has(message.job));
+  const hasRemovedDraft = saved.draftJobId !== undefined && !jobIds.has(saved.draftJobId);
+  if (messages.length === saved.messages.length && !hasRemovedDraft) return saved;
+  return {
+    messages,
+    draft: saved.draft,
+    ...(hasRemovedDraft ? {} : { draftJobId: saved.draftJobId, reportDraft: saved.reportDraft }),
+  };
+}

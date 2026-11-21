@@ -9,7 +9,7 @@ import statistics
 import sys
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from engine import parse, review, Model, DEFAULT_SKILL, RULES
+from engine import parse, review, Model, DEFAULT_SKILL, RULES, LEGACY_RULES
 from app.config import settings
 from app.tacc_sdk import run_remote
 
@@ -52,6 +52,10 @@ def main():
     args = parser.parse_args()
     manifest_path = Path(args.manifest).resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    gold_categories = {key for case in manifest["contracts"] for key in case["gold"]}
+    categories = list(RULES) + [key for key in LEGACY_RULES if key in gold_categories]
+    if "liquidated_damages" in gold_categories and "agreement_date" not in gold_categories:
+        categories.remove("agreement_date")
     if args.repeats < 1:
         raise SystemExit("--repeats must be positive")
     randomizer = random.Random(42)
@@ -66,7 +70,7 @@ def main():
                 start = time.perf_counter()
                 model = Model(lambda *_: None, args.mode)
                 try:
-                    skill = {**DEFAULT_SKILL, "explicit": True}
+                    skill = {**DEFAULT_SKILL, "explicit": True, "categories": categories}
                     if args.mode == "tacc" and settings.tacc_protocol == "sdk":
                         result = run_remote("review", lambda *_: None, paragraphs=paragraphs, skill=skill,
                                             instruction="", method=method, evaluation=True)
@@ -102,7 +106,7 @@ def main():
             "input_tokens": sum(c["input_tokens"] for c in calls) if calls and all(c["input_tokens"] is not None for c in calls) else None,
             "output_tokens": sum(c["output_tokens"] for c in calls) if calls and all(c["output_tokens"] is not None for c in calls) else None,
             "call_count": len(calls),
-            "per_category": {category: [s for s in scores if s["category"] == category] for category in RULES},
+            "per_category": {category: [s for s in scores if s["category"] == category] for category in categories},
         }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

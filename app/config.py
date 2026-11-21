@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,7 +12,15 @@ class Settings(BaseSettings):
     app_demo: bool = True
     app_secure_cookie: bool = False
     app_public_url: str = "http://127.0.0.1:8765"
-    model_mode: str = "demo"
+    model_mode: Literal["demo", "tacc", "ollama"] = "demo"
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "gemma4:12b"
+    ollama_timeout: int = 180
+    ollama_context_limit: int = 16384
+    ollama_max_output_tokens: int = 1800
+    contract_vector_search: bool | None = None
+    ollama_embedding_model: str = "bge-m3:latest"
+    ollama_embedding_timeout: int = 30
     admin_email: str = ""
     admin_password: str = ""
     graph_tenant_id: str = ""

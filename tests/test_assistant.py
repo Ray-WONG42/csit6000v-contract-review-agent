@@ -1,13 +1,17 @@
+import io
 import json
 import socket
+from types import SimpleNamespace
+import urllib.request
 import pytest
 from conftest import login
-from app import assistant
+from app import assistant, tacc_sdk
 from app.assistant import run_assistant
-from app.config import settings
+from app.config import Settings, settings
 from app.db import session, User, Skill
 from app.worker import run_assistant_once
 from app.web_tools import fetch_public
+from engine import Model
 from sqlalchemy import select
 
 
@@ -28,6 +32,71 @@ def test_ordinary_chat_does_not_force_a_contract(client, monkeypatch):
     result = run_assistant(user["id"], request, "r1", lambda *_: None, checkpoint,
         decide=lambda system, payload: {"action": "final", "answer": "你好，有什么需要讨论的？"})
     assert "你好" in result["answer"]
+
+
+def test_ollama_chat_uses_local_model_with_tacc_still_configured(client, monkeypatch):
+    monkeypatch.setattr(settings, "model_mode", "ollama")
+    monkeypatch.setattr(settings, "tacc_protocol", "sdk")
+    monkeypatch.setattr(settings, "ollama_url", "http://127.0.0.1:11434")
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    monkeypatch.setattr(settings, "ollama_model", Settings(_env_file=None).ollama_model)
+    monkeypatch.setattr(tacc_sdk, "run_remote", lambda *args, **kwargs: pytest.fail("Ollama called TACC"))
+
+    def chat(request, *, timeout):
+        assert request.full_url == "http://127.0.0.1:11434/api/chat"
+        assert timeout == settings.ollama_timeout
+        body = json.loads(request.data)
+        assert body["model"] == "gemma4:12b"
+        assert body["format"] == "json" and body["stream"] is False
+        assert body["options"]["num_ctx"] == settings.ollama_context_limit
+        assert json.loads(body["messages"][-1]["content"])["message"] == "你好"
+        reply = {"action": "final", "answer": "你好，有什么需要讨论的？"}
+        return io.BytesIO(json.dumps({"message": {"content": json.dumps(reply)}}).encode())
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *args: SimpleNamespace(open=chat))
+    user, request, checkpoint = runner(client)
+    result = run_assistant(user["id"], request, "ollama-chat", lambda *_: None, checkpoint)
+    assert result["mode"] == "ollama" and result["answer"].startswith("你好")
+    config = client.get("/api/config").json()
+    assert config["model_mode"] == "ollama" and config["model_name"] == "gemma4:12b"
+
+
+def test_ollama_selector_filters_catalog_and_applies_to_queued_chat(client, monkeypatch):
+    monkeypatch.setattr(settings, "model_mode", "ollama")
+    selected = "local-chat:latest"
+
+    def ollama_response(settings, path, timeout, body=None):
+        if path == "/api/tags":
+            return {"models": [{"name": selected}, {"model": "embed:latest", "capabilities": ["embedding"]},
+                               {"model": "cloud:latest", "remote_model": "upstream", "capabilities": ["completion"]}]}
+        if path == "/api/show":
+            assert body == {"model": selected}
+            return {"capabilities": ["completion"]}
+        assert path == "/api/chat"
+        assert body["model"] == selected
+        return {"message": {"content": '{"action":"final","answer":"本地模型回复"}'}}
+
+    monkeypatch.setattr(Model, "_ollama_json", staticmethod(ollama_response))
+    assert client.get("/api/ollama/models").status_code == 401
+    login(client)
+    assert client.get("/api/ollama/models").json() == [selected]
+
+    body = {"request_key": "local-model-chat", "message": "你好", "ollama_model": selected}
+    started = client.post("/api/assistant/runs", json=body).json()
+    monkeypatch.setattr(settings, "ollama_model", "changed-default:latest")
+    assert client.post("/api/assistant/runs", json=body).json()["id"] == started["id"]
+    assert client.post("/api/assistant/runs", json={**body, "ollama_model": "cloud:latest"}).status_code == 409
+    assert run_assistant_once()
+    result = client.get("/api/assistant/runs/" + started["id"]).json()["result"]
+    assert result["model_name"] == selected
+
+    rejected = client.post("/api/assistant/runs", json={**body, "request_key": "cloud-model-chat",
+                                                       "ollama_model": "cloud:latest"}).json()
+    assert run_assistant_once()
+    failed = client.get("/api/assistant/runs/" + rejected["id"]).json()
+    assert failed["state"] == "failed" and "本地对话模型列表" in failed["error"]
+    login(client, "admin")
+    assert client.get("/api/ollama/models").status_code == 403
 
 
 def test_multistep_search_read_and_skill_creation(client, monkeypatch):

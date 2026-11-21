@@ -8,7 +8,7 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--live', action='store_true', help='Use the configured real TACC model, not the rule demo.')
+    parser.add_argument('--live', action='store_true', help='Use the configured Ollama or TACC model.')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='clause-demo-') as directory:
         try:
@@ -31,8 +31,8 @@ def run(directory, args):
     from sqlalchemy import select
     initialize()
     seed_users()
-    if args.live and settings.model_mode != 'tacc':
-        raise SystemExit('Set MODEL_MODE=tacc and configure TACC before --live.')
+    if args.live and settings.model_mode == 'demo':
+        raise SystemExit('Set MODEL_MODE=ollama or MODEL_MODE=tacc before --live.')
     with session() as db:
         user = db.scalar(select(User).where(User.email == 'legal@example.com'))
         user_id = user.id

@@ -6,10 +6,12 @@ import os
 import re
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 import zipfile
 from prompt_loader import load_prompt
 from collections import Counter
+from itertools import zip_longest
 
 
 RULES = {
@@ -20,8 +22,23 @@ RULES = {
     "audit_rights": ("审计权", ("audit", "inspect records", "access to records", "examine books"), ("可审计范围", "通知要求")),
     "assignment": ("转让限制", ("assignment", "assign", "transfer", "prior written consent"), ("转让条件", "同意要求")),
     "insurance": ("保险", ("insurance", "coverage", "insured", "policy limit"), ("保险类型", "保险金额")),
+    "agreement_date": ("协议日期", ("agreement date", "contract date", "dated", "made as of", "entered into", "executed on", "signed on"), ("协议订立或签署日期",)),
+}
+LEGACY_RULES = {
     "liquidated_damages": ("约定赔偿", ("liquidated damages", "agreed damages", "per day of delay", "delay damages"), ("金额或计算标准", "触发条件")),
 }
+MONTH = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?"
+DAY = r"(?:0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?"
+AGREEMENT_DATE_EVIDENCE = re.compile(
+    r"(?:\b(?:agreement|contract|execution)\s+date\b(?:\s+is)?"
+    r"|\b(?:this\s+)?(?:agreement|contract)\s+(?:(?:is|was)\s+)?"
+    r"(?:dated|made(?:\s+and\s+entered\s+into)?|entered\s+into|executed|signed)(?:\s+(?:as\s+of|on))?"
+    r"|(?:协议|合同|签署|订立)日期|本(?:协议|合同)(?:(?:签署|签订|订立)?于))"
+    r"\s*[:|]?\s*(?:(?:this|the)\s+)?(?P<date>"
+    rf"{MONTH}\s+{DAY},?\s+\d{{4}}|{DAY}\s+(?:day\s+of\s+)?{MONTH},?\s+\d{{4}}"
+    r"|\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4}|\d{4}年\s*\d{1,2}月\s*\d{1,2}日)(?!\d)",
+    re.I,
+)
 TASK_STAGES = {"found", "not_found", "review"}
 WORD = re.compile(r"[a-z0-9]+", re.I)
 STANDARD_REQUESTS = {"", "标准审查", "标准合同审查", "进行标准合同审查", "请按所选清单审查这份合同",
@@ -116,14 +133,18 @@ class Retrieval:
         return [index for index, _ in ranked[:limit]]
 
 
+def is_standard_request(instruction):
+    return instruction.strip().lower().rstrip("。.!！") in STANDARD_REQUESTS
+
+
 def custom_definitions(skill, instruction):
-    rules = dict(RULES)
+    rules = {**RULES, **{key: LEGACY_RULES[key] for key in skill["categories"] if key in LEGACY_RULES}}
     for index, item in enumerate(skill.get("custom_items", []), 1):
         rules[f"custom_{index}"] = (item["title"], (item["question"],), ())
     focus = skill.get("focus", "").strip()
     if focus and skill.get("explicit"):
         rules["custom_focus"] = ("Skill 专项要求", (focus,), ())
-    if instruction.strip().lower().rstrip("。.!！") not in STANDARD_REQUESTS:
+    if not is_standard_request(instruction):
         rules["custom_question"] = ("本次问题", (instruction.strip(),), ())
     return rules
 
@@ -133,8 +154,7 @@ def scope_plan(skill, instruction, model, definitions):
         return [], "目前支持单份合同的审查。请提交要检查的类别或问题。"
     categories = skill["categories"]
     custom = [key for key in definitions if key.startswith("custom_") and key != "custom_question"]
-    standard = instruction.strip().lower().rstrip("。.!！") in STANDARD_REQUESTS
-    if standard:
+    if is_standard_request(instruction):
         return categories + custom, ""
     if model.mode != "demo":
         return (categories if skill.get("explicit") else []) + custom + ["custom_question"], ""
@@ -146,6 +166,7 @@ def scope_plan(skill, instruction, model, definitions):
         "audit_rights": r"审计|audit",
         "assignment": r"转让|assignment",
         "insurance": r"保险|insurance",
+        "agreement_date": r"(?:协议|合同)(?:日期|签订|签署|订立)|签署日期|订立日期|agreement date|contract date|execution date",
         "liquidated_damages": r"约定赔偿|违约金|liquidated damages",
     }
     matches = [key for key in categories if re.search(aliases[key], instruction, re.I)]
@@ -159,20 +180,116 @@ def scope_plan(skill, instruction, model, definitions):
 
 
 class Model:
-    def __init__(self, event, mode=None):
+    def __init__(self, event, mode=None, ollama_model=None):
         self.event = event
         self.mode = mode or os.getenv("MODEL_MODE", "demo")
         self.calls = []
+        self._ollama_model = ollama_model
+
+    @property
+    def ollama_model(self):
+        from app.config import settings
+        return self._ollama_model if self._ollama_model is not None else settings.ollama_model
 
     @property
     def signature(self):
         from app.config import settings
         import hashlib
+        if self.mode == "ollama":
+            source = ["survey-v2", self.mode, self.ollama_model, settings.ollama_url,
+                      settings.ollama_context_limit, settings.ollama_max_output_tokens,
+                      settings.llm_temperature, load_prompt("survey"), load_prompt("contract_system")]
+            return hashlib.sha256(json.dumps(source).encode()).hexdigest()
         source = f"survey-v2|{self.mode}|{settings.tacc_model}|{settings.tacc_url}|{settings.tacc_context_limit}"
         source += '|' + load_prompt('survey') + '|' + load_prompt('contract_system')
         source += '|' + str(getattr(settings, 'llm_base_url', '')) + '|' + str(getattr(settings, 'model_name', ''))
         source += '|' + str(getattr(settings, 'llm_temperature', 0)) + '|' + str(settings.tacc_max_output_tokens)
         return hashlib.sha256(source.encode()).hexdigest()
+
+    @staticmethod
+    def _ollama_json(settings, path, timeout, body=None):
+        request = urllib.request.Request(settings.ollama_url.rstrip("/") + path,
+                                         data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
+                                         headers={"Content-Type": "application/json"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=timeout) as response:
+            return json.load(response)
+
+    @classmethod
+    def local_ollama_models(cls, selected=""):
+        from app.config import settings
+        try:
+            catalog = cls._ollama_json(settings, "/api/tags", 4)["models"]
+            names = set()
+            for item in catalog:
+                name = item.get("model") or item.get("name")
+                if not name or (selected and name != selected) or item.get("remote_host") or item.get("remote_model"):
+                    continue
+                if not item.get("capabilities"):
+                    try:
+                        item = cls._ollama_json(settings, "/api/show", 4, {"model": name})
+                    except urllib.error.HTTPError as exc:
+                        if exc.code != 404:
+                            raise
+                        continue
+                if "completion" in (item.get("capabilities") or []) and not (item.get("remote_host") or item.get("remote_model")):
+                    names.add(name)
+            return sorted(names, key=str.casefold)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise ValueError("无法读取 Ollama 模型列表，请检查本机 Ollama 服务。") from exc
+
+    def require_local_ollama_model(self):
+        if self.ollama_model not in self.local_ollama_models(self.ollama_model):
+            raise ValueError("所选模型当前不在 Ollama 的本地对话模型列表中，请重新选择。")
+
+    def _ollama_response(self, settings, system, payload, phase):
+        if not settings.ollama_url or not self.ollama_model:
+            raise ValueError("请配置 OLLAMA_URL 和 OLLAMA_MODEL。")
+        body = {
+            "model": self.ollama_model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            "stream": False,
+            "format": "json",
+            "think": False,
+            "options": {"temperature": settings.llm_temperature,
+                        "num_predict": settings.ollama_max_output_tokens,
+                        "num_ctx": settings.ollama_context_limit},
+        }
+        raw = json.dumps(body, ensure_ascii=False).encode()
+        if len(raw) + settings.ollama_max_output_tokens > settings.ollama_context_limit:
+            raise ValueError("请求超出 Ollama 的保守上下文预算，请调小分块或调整 OLLAMA_CONTEXT_LIMIT。")
+        self.event("model", "调用本地 Ollama 模型", phase)
+        try:
+            data = self._ollama_json(settings, "/api/chat", settings.ollama_timeout, body)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ValueError("Ollama 找不到配置的模型，请检查 OLLAMA_MODEL 和 ollama list。") from exc
+            raise ValueError(f"Ollama 请求失败（HTTP {exc.code}），请检查本机 Ollama 日志。") from exc
+        except (TimeoutError, urllib.error.URLError) as exc:
+            raise ValueError("Ollama 连接失败或超时，请检查本机服务和 OLLAMA_TIMEOUT。") from exc
+        if data.get("done_reason") == "length":
+            raise ValueError("Ollama 的输出达到上限，请调整 OLLAMA_MAX_OUTPUT_TOKENS。")
+        usage = {"prompt_tokens": data.get("prompt_eval_count"), "completion_tokens": data.get("eval_count")}
+        return data["message"]["content"], usage
+
+    def embed(self, texts):
+        from app.config import settings
+        if not settings.ollama_url or not settings.ollama_embedding_model:
+            raise ValueError("请配置 Ollama 向量模型和地址。")
+        body = {"model": settings.ollama_embedding_model, "input": texts, "truncate": False}
+        data = self._ollama_json(settings, "/api/embed", settings.ollama_embedding_timeout, body)
+        embeddings = data.get("embeddings") if isinstance(data, dict) else None
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise ValueError("Ollama 返回的向量数量不正确。")
+        return embeddings
+
+    @staticmethod
+    def _parse_json(content):
+        if not isinstance(content, str):
+            raise ValueError("模型未返回文本 JSON。")
+        clean = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.I).strip()
+        return json.loads(clean)
 
     def call(self, system, payload, phase):
         from app.config import settings
@@ -180,6 +297,9 @@ class Model:
         usage = {}
         error = ""
         try:
+            if self.mode == "ollama":
+                content, usage = self._ollama_response(settings, system, payload, phase)
+                return self._parse_json(content)
             if self.mode != "tacc":
                 raise RuntimeError("当前没有启用真实 TACC 模型。")
             url = settings.tacc_url
@@ -224,11 +344,7 @@ class Model:
                     raise RuntimeError("TACC 队列任务失败")
                 data = data["result"]
             usage = data.get("usage") or {}
-            content = data["choices"][0]["message"]["content"]
-            if not isinstance(content, str):
-                raise ValueError("TACC 未返回文本 JSON。")
-            clean = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.I).strip()
-            return json.loads(clean)
+            return self._parse_json(data["choices"][0]["message"]["content"])
         except Exception as exc:
             error = type(exc).__name__
             raise
@@ -246,7 +362,7 @@ SYSTEM = load_prompt("contract_system")
 def model_rows(model, categories, skill, instruction, paragraphs, phase, evaluation=False, overview=None, definitions=None):
     definitions = definitions or RULES
     if model.mode == "demo":
-        return {key: demo_row(key, paragraphs) for key in categories if key in RULES}
+        return {key: demo_row(key, paragraphs) for key in categories if key in RULES or key in LEGACY_RULES}
     payload = {
         "requested": [{"category": key, "definition": definitions[key][1][0],
                        "checklist": skill.get("checks", {}).get(key) or definitions[key][2]} for key in categories],
@@ -278,11 +394,16 @@ def demo_row(category, paragraphs):
         "insurance": r"maintain.{0,65}insurance|insurance coverage",
         "liquidated_damages": r"liquidated damages",
     }
+    pattern = AGREEMENT_DATE_EVIDENCE if category == "agreement_date" else re.compile(patterns[category], re.I)
     for i, p in enumerate(paragraphs):
         sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", p["text"])
         for sentence in sentences:
-            if not re.search(patterns[category], sentence, re.I):
+            match = pattern.search(sentence)
+            if not match:
                 continue
+            if category == "agreement_date":
+                return {"status": "found", "evidence": [{"paragraph_id": p["id"], "quote": match.group(0)}],
+                        "finding": f"协议日期为 {match['date']}。", "missing": []}
             evidence = [{"paragraph_id": p["id"], "quote": sentence[:550]}]
             if category == "automatic_renewal" and not re.search(r"\d+\s+(?:(?:calendar|business)\s+)?days?", sentence, re.I):
                 next_para = next((item for item in paragraphs[i + 1:]
@@ -297,7 +418,7 @@ def demo_row(category, paragraphs):
     return {"status": "not_found", "evidence": []}
 
 
-def validate(category, row, candidates, definitions=None):
+def validate(category, row, candidates, definitions=None, retrieval_sources=None):
     if not isinstance(row, dict) or row.get("status") not in {"found", "not_found", "needs_context"}:
         raise ValueError("模型未返回有效类别状态。")
     if row["status"] == "needs_context":
@@ -318,7 +439,8 @@ def validate(category, row, candidates, definitions=None):
         if not phrase or len(phrase) > 1200 or phrase not in source:
             raise ValueError("引用无法与合同原文对应。")
         start = source.index(phrase)
-        verified.append({"paragraph_id": pid, "quote": source[start:start + len(phrase)], "page": allowed[pid]["page"]})
+        verified.append({"paragraph_id": pid, "quote": source[start:start + len(phrase)], "page": allowed[pid]["page"],
+                         "retrieval_sources": (retrieval_sources or {}).get(pid, [])})
     missing = row.get("missing", [])
     question = row.get("question", "")
     finding = row.get("finding")
@@ -356,7 +478,11 @@ def survey_document(paragraphs, model, categories, definitions):
     from app.config import settings
     hints = {key: [] for key in categories}
     partial = False
-    budget = max(400, min(8000, (settings.tacc_context_limit - settings.tacc_max_output_tokens - 2000) // 3))
+    if model.mode == "ollama":
+        context_limit, max_output = settings.ollama_context_limit, settings.ollama_max_output_tokens
+    else:
+        context_limit, max_output = settings.tacc_context_limit, settings.tacc_max_output_tokens
+    budget = max(400, min(8000, (context_limit - max_output - 2000) // 3))
     for n, chunk in enumerate(semantic_chunks(paragraphs, budget), 1):
         model.event("survey", f"通读合同 · 分块 {n}", f"{chunk[0]['id']}–{chunk[-1]['id']}")
         if model.mode == "demo":
@@ -414,7 +540,8 @@ def annotate(row, skill, definitions=None):
     return row
 
 
-def review(paragraphs, skill, instruction, model, method="retrieval", evaluation=False, checkpoint=None):
+def review(paragraphs, skill, instruction, model, method="retrieval", evaluation=False, checkpoint=None,
+           vector_hits=None):
     started = time.perf_counter()
     event = model.event
     definitions = custom_definitions(skill, instruction)
@@ -436,8 +563,8 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             except ValueError as exc:
                 results.append(unresolved(key, str(exc)))
     else:
-        # Batch normal built-in categories into one extraction request. BM25
-        # still limits context; quotation validation remains per-category.
+        # Batch normal built-in categories while keeping candidate budgets and
+        # quotation validation separate for each category.
         # A failed/missing row falls through to the existing isolated retry path.
         batched_tacc = model.mode == "tacc" and method == "retrieval"
         cached = checkpoint("survey") if checkpoint and method == "retrieval" and not batched_tacc else None
@@ -445,16 +572,38 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             hints, survey_partial = cached["hints"], cached["partial"]
             event("cache", "复用已完成的合同通读", "")
         elif batched_tacc:
-            # BM25 and the bounded candidate union replace one model survey call
-            # per semantic chunk. The extraction batch still sees up to four
-            # evidence candidates per requested built-in category.
+            # The bounded candidate union replaces the model survey in this path.
             hints, survey_partial = {}, False
-            event("retrieve", "使用本地 BM25 构建批量候选", "")
+            event("retrieve", "使用关键词和向量检索构建批量候选" if vector_hits else "使用本地 BM25 构建批量候选", "")
         else:
             hints, survey_partial = survey_document(paragraphs, model, categories, definitions) if method == "retrieval" else ({}, False)
             if checkpoint and method == "retrieval":
                 checkpoint("survey", {"hints": hints, "partial": survey_partial, "signature": model.signature})
         by_id = {p["id"]: i for i, p in enumerate(paragraphs)}
+        vector_hits = vector_hits or {}
+
+        def candidates_for(key, keyword_limit, fallback_limit, limit):
+            keyword = retrieval.search(key, keyword_limit, definitions[key])
+            vector = [by_id[pid] for pid in vector_hits.get(key, []) if pid in by_id]
+            survey = [by_id[pid] for pid in hints.get(key, []) if pid in by_id]
+            # Alternate the two rankings so each can contribute at a fixed budget.
+            ranked = [i for pair in zip_longest(keyword, vector) for i in pair if i is not None]
+            fallback = list(range(min(fallback_limit, len(paragraphs)))) if not ranked else []
+            ranked = ranked + fallback
+            custom = key.startswith("custom_")
+            if vector and survey:
+                offset = 0 if custom else 2
+                ordered = ranked[:offset] + survey[:1] + ranked[offset:] + survey[1:]
+            else:
+                ordered = survey + ranked if custom else ranked + survey
+            sources = (("keyword", keyword), ("vector", vector), ("survey", survey), ("fallback", fallback))
+            return {i: [source for source, matches in sources if i in matches]
+                    for i in list(dict.fromkeys(ordered))[:limit]}
+
+        def verify_candidates(key, row, selected):
+            return validate(key, row, [paragraphs[i] for i in selected], definitions,
+                            {paragraphs[i]["id"]: sources for i, sources in selected.items()})
+
         batch_rows = {}
         batch_indexes = {}
         batch_categories = [key for key in categories
@@ -462,11 +611,7 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
                             and not (checkpoint and checkpoint("category:" + key))]
         if batch_categories and model.mode == "tacc":
             for key in batch_categories:
-                ranked = retrieval.search(key, 3, definitions[key])
-                if not ranked:
-                    ranked = list(range(min(2, len(paragraphs))))
-                suggested = [by_id[x] for x in hints.get(key, []) if x in by_id]
-                batch_indexes[key] = list(dict.fromkeys(ranked + suggested))[:4]
+                batch_indexes[key] = candidates_for(key, 3, 2, 4)
             # Bound output size so a batch fits the model timeout and token budget.
             for offset in range(0, len(batch_categories), 3):
                 group = batch_categories[offset:offset + 3]
@@ -482,8 +627,8 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
         for key in categories:
             label = definitions[key][0]
             if key.startswith("custom_") and model.mode == "demo":
-                results.append(unresolved(key, "此自定义审查项需要连接 TACC 模型后执行。"))
-                event("review", label + " · 等待模型", "连接 TACC 后重新审查")
+                results.append(unresolved(key, "此自定义审查项需要启用 Ollama 或 TACC 模型后执行。"))
+                event("review", label + " · 等待模型", "启用模型后重新审查")
                 continue
             cached_result = checkpoint("category:" + key) if checkpoint else None
             if cached_result:
@@ -491,47 +636,35 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
                 event("cache", label + " · 恢复已完成结果", "")
                 continue
             if key in batch_categories and key in batch_rows:
-                candidate_ids = {paragraphs[i]["id"] for i in batch_indexes[key]}
-                evidence_ids = {item.get("paragraph_id") for item in batch_rows[key].get("evidence", [])
-                                if isinstance(item, dict)}
-                # Validate against the category's own BM25 candidates only.
-                # If evidence points outside that set, use the bounded retry below.
-                if evidence_ids.issubset(candidate_ids):
-                    try:
-                        result = validate(key, batch_rows[key],
-                                          [paragraphs[i] for i in batch_indexes[key]], definitions)
-                        results.append(result)
-                        event("validate", label + " · 批量证据校验完成", result["status"])
-                        if checkpoint:
-                            checkpoint("category:" + key, result)
-                        continue
-                    except (ValueError, KeyError, TypeError):
-                        pass
-            indexes = retrieval.search(key, 4 if model.mode != "demo" else 1, definitions[key])
-            # Read a small fallback sample for terminology not present in the keyword index.
-            if not indexes:
-                indexes = list(range(min(3, len(paragraphs))))
-            suggested = [by_id[x] for x in hints.get(key, [])]
-            ranked = suggested + indexes if key.startswith("custom_") else indexes + suggested
-            indexes = list(dict.fromkeys(ranked))[:6]
+                try:
+                    result = verify_candidates(key, batch_rows[key], batch_indexes[key])
+                except (ValueError, KeyError, TypeError):
+                    pass
+                else:
+                    results.append(result)
+                    event("validate", label + " · 批量证据校验完成", result["status"])
+                    if checkpoint:
+                        checkpoint("category:" + key, result)
+                    continue
+            indexes = candidates_for(key, 1 if model.mode == "demo" else 4, 3, 6)
             for attempt in range(2):
                 candidates = [paragraphs[i] for i in sorted(indexes)]
                 event("retrieve" if not attempt else "expand",
                       "检索" + label if not attempt else "补查相邻段落", ", ".join(p["id"] for p in candidates))
                 try:
                     rows = model_rows(model, [key], skill, instruction, candidates, key, evaluation, definitions=definitions)
-                    result = validate(key, rows.get(key), candidates, definitions)
+                    result = verify_candidates(key, rows.get(key), indexes)
                     event("validate", label + " · 校验完成", result["status"])
                     break
                 except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
                     detail = str(exc) if isinstance(exc, ValueError) and "line " not in str(exc) else type(exc).__name__
-                    more = sorted({i + delta for i in indexes for delta in (-1, 0, 1) if 0 <= i + delta < len(paragraphs)})
                     if attempt:
                         result = unresolved(key, detail)
                         event("review", label + " · 待人工复核", detail)
                         break
                     event("retry", label + " · 需要复查", detail)
-                    indexes = more
+                    more = sorted({i + delta for i in indexes for delta in (-1, 0, 1) if 0 <= i + delta < len(paragraphs)})
+                    indexes = {i: indexes.get(i, ["adjacent"]) for i in more}
             results.append(result)
             if checkpoint:
                 checkpoint("category:" + key, result)
@@ -546,14 +679,21 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             answer.append(f"{row['label']}：{row.get('finding') or detail}\n{row['explanation']}")
         else:
             answer.append(row["label"] + "：" + ("未检出支持原文。" if row["status"] == "not_found" else "需要人工复核。"))
-    return {"state": state, "rows": results, "calls": model.calls, "answer": "\n\n".join(answer),
-            "seconds": round(time.perf_counter() - started, 3), "model_mode": model.mode}
+    result = {"state": state, "rows": results, "calls": model.calls, "answer": "\n\n".join(answer),
+              "seconds": round(time.perf_counter() - started, 3), "model_mode": model.mode}
+    if model.mode == "ollama":
+        result["model_name"] = model.ollama_model
+    return result
 
 
 def report_text(name, result):
+    mode = {"tacc": "TACC", "ollama": "本地 Ollama", "demo": "本地规则演示"}.get(
+        result.get("model_mode"), "本地规则演示")
+    if result.get("model_name"):
+        mode += " · " + result["model_name"]
     lines = ["# 合同审查报告", "", f"审查对象：{name}", "",
              "本报告供人工复核。未找到对应原文表示本次未检出。",
-             f"执行模式：{'TACC' if result.get('model_mode') == 'tacc' else '本地规则演示'}", ""]
+             f"执行模式：{mode}", ""]
     for row in result["rows"]:
         state = {"found": "找到证据", "not_found": "未找到对应原文", "review": "待人工复核"}[row["status"]]
         lines.extend([f"## {row['label']}", state])

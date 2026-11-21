@@ -1,6 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
-from engine import RULES
+from engine import LEGACY_RULES, RULES
 
 
 class EmailInput(BaseModel):
@@ -38,7 +38,7 @@ class CustomItem(BaseModel):
         return value
 
 
-CategoryId = Literal["termination", "liability_cap", "governing_law", "automatic_renewal", "audit_rights", "assignment", "insurance", "liquidated_damages"]
+CategoryId = Literal["termination", "liability_cap", "governing_law", "automatic_renewal", "audit_rights", "assignment", "insurance", "agreement_date", "liquidated_damages"]
 
 
 class SkillInput(BaseModel):
@@ -52,14 +52,15 @@ class SkillInput(BaseModel):
     @field_validator("categories")
     @classmethod
     def category_values(cls, value):
-        if len(set(value)) != len(value) or any(x not in RULES for x in value):
+        if len(set(value)) != len(value) or any(x not in RULES and x not in LEGACY_RULES for x in value):
             raise ValueError("审查类别无效")
         return value
 
     @field_validator("checks")
     @classmethod
     def checks_valid(cls, value):
-        if any(key not in RULES or len(items) > 10 or any(len(item) > 150 for item in items) for key, items in value.items()):
+        if any((key not in RULES and key not in LEGACY_RULES) or len(items) > 10
+               or any(len(item) > 150 for item in items) for key, items in value.items()):
             raise ValueError("检查项无效")
         return value
 
@@ -75,6 +76,8 @@ class JobInput(BaseModel):
     skill_id: str = Field(default="", max_length=64)
     parent_id: str = Field(default="", max_length=64)
     request_key: str = Field(min_length=8, max_length=100)
+    model_mode: Literal["", "ollama", "tacc"] = ""
+    ollama_model: str = Field(default="", max_length=255)
 
 
 class CompanyInput(BaseModel):
@@ -97,6 +100,7 @@ class EvidenceView(BaseModel):
     paragraph_id: str
     quote: str
     page: int | None = None
+    retrieval_sources: list[Literal["keyword", "vector", "survey", "fallback", "adjacent"]] = Field(default_factory=list)
 
 
 class RowView(BaseModel):
@@ -120,6 +124,7 @@ class ResultView(BaseModel):
     message: str = ""
     answer: str = ""
     model_mode: str = ""
+    model_name: str = ""
     tacc_client_job: str = ""
     seconds: float = 0
 
@@ -136,6 +141,8 @@ class JobView(BaseModel):
     result: ResultView | None = None
     report: str = ""
     delivery: str = ""
+    model_mode: str = ""
+    model_name: str = ""
 
 
 class ContractView(BaseModel):
@@ -158,6 +165,8 @@ class AssistantInput(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
     contract_id: str = Field(default="", max_length=64)
     allow_web: bool = True
+    model_mode: Literal["", "ollama", "tacc"] = ""
+    ollama_model: str = Field(default="", max_length=255)
 
     @model_validator(mode="after")
     def context_budget(self):

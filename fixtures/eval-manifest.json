@@ -12,13 +12,13 @@
         "audit_rights": ["The Customer has the right to audit the Supplier's service records on ten business days written notice."],
         "assignment": ["Neither party may assign this Agreement without the prior written consent of the other party."],
         "insurance": ["The Supplier shall maintain commercial liability insurance with a limit of USD 1,000,000."],
-        "liquidated_damages": ["The Supplier shall pay liquidated damages of USD 500 per day of delay, capped at USD 10,000."]
+        "agreement_date": ["This Agreement is dated 15 January 2026."]
       }
     },
     {
       "id": "negative-work-order",
       "file": "Negative-Contract.txt",
-      "gold": {"termination": [], "liability_cap": [], "governing_law": [], "automatic_renewal": [], "audit_rights": [], "assignment": [], "insurance": [], "liquidated_damages": []}
+      "gold": {"termination": [], "liability_cap": [], "governing_law": [], "automatic_renewal": [], "audit_rights": [], "assignment": [], "insurance": [], "agreement_date": []}
     }
   ]
 }

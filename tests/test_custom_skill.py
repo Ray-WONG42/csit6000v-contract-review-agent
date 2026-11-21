@@ -34,4 +34,4 @@ def test_demo_open_question_reports_model_requirement():
                     "发票的付款期限是多少？", Model(lambda *_: None, "demo"))
     assert len(result["rows"]) == 1
     assert result["rows"][0]["category"] == "custom_question"
-    assert "需要连接 TACC" in result["rows"][0]["explanation"]
+    assert "需要启用 Ollama 或 TACC" in result["rows"][0]["explanation"]

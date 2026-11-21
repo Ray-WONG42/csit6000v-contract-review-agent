@@ -87,3 +87,22 @@ def test_ambiguous_submission_checkpoint_blocks_duplicate(monkeypatch, tmp_path)
         tacc_sdk.run_remote("review", lambda *_: None, checkpoint, paragraphs=[])
     assert len(calls) == 1
     assert not list(tmp_path.rglob("request.json"))
+
+
+def test_uncertain_gpu_submission_is_not_repeated(monkeypatch, tmp_path):
+    monkeypatch.setattr(tacc_sdk.settings, "app_data", str(tmp_path))
+    monkeypatch.setattr(tacc_sdk.settings, "tacc_url", "")
+    submissions = []
+
+    def submit(cwd):
+        submissions.append(cwd)
+        raise RuntimeError("lost submission response")
+
+    monkeypatch.setattr(tacc_sdk, "submit", submit)
+    with pytest.raises(RuntimeError, match="lost submission response"):
+        tacc_sdk.queued_service_base(None)
+    with pytest.raises(RuntimeError, match="提交结果不确定"):
+        tacc_sdk.start_service_job()
+    with pytest.raises(RuntimeError, match="提交结果不确定"):
+        tacc_sdk.queued_service_base(None)
+    assert len(submissions) == 1

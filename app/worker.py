@@ -8,11 +8,18 @@ from sqlalchemy import select, update, text
 from .config import settings
 from .db import session, initialize, Job, Contract, File, Event, Checkpoint, Delivery, Receipt, Ticket, User, MailCursor, AssistantRun, dump, identifier
 from .security import digest
-from .services import write_file, ingest, create_job, graph_client, deliver_pending
+from .services import ACTIVE_REVIEW_STATES, write_file, ingest, create_job, graph_client, deliver_pending, remove_deleted_files
 from .schemas import JobInput
+from .retrieval import vector_matches
+from .tacc_sdk import SERVICE_RECHECK_SECONDS, TaccServicePending, queued_service_base
 from engine import parse, review, Model, report_text, docx_report
 
-ACTIVE = ["parsing", "surveying", "extracting", "validating", "rendering"]
+ACTIVE = ACTIVE_REVIEW_STATES[1:]
+
+
+def defer_for_tacc(task):
+    task.state, task.claim, task.lease = "waiting_tacc", "", time.time() + SERVICE_RECHECK_SECONDS
+    task.attempts -= 1  # Waiting for the scheduler does not consume an execution attempt.
 
 
 def claim_job():
@@ -43,7 +50,7 @@ def run_job(job_id, claim):
     heart.start()
     def event(stage, title, detail=""):
         mapping = {"parse": "parsing", "survey": "surveying", "retrieve": "extracting",
-                   "expand": "extracting", "validate": "validating", "render": "rendering"}
+                   "expand": "extracting", "validate": "validating", "render": "rendering", "queue": "tacc_client"}
         with session() as db:
             job = db.get(Job, job_id)
             if job.claim != claim:
@@ -76,6 +83,11 @@ def run_job(job_id, claim):
             file = db.get(File, contract.file_id)
             paragraphs = json.loads(contract.paragraphs)
             skill = json.loads(job.skill)
+        ollama_model = skill.get("ollama_model") or None
+        mode = skill.get("model_mode") or ("ollama" if ollama_model else settings.model_mode)
+        sdk_review = mode == "tacc" and settings.tacc_protocol == "sdk"
+        if sdk_review and not checkpoint("tacc_client"):
+            queued_service_base(checkpoint)
         event("parse", "读取合同并建立段落编号", contract.name)
         if not paragraphs:
             paragraphs = parse(contract.name, (settings.data / file.path).read_bytes())
@@ -85,15 +97,30 @@ def run_job(job_id, claim):
                     raise RuntimeError("任务已被重新领取")
                 db.get(Contract, contract.id).paragraphs = dump(paragraphs)
         event("parse", f"正文已解析 · {len(paragraphs)} 个段落", "")
-        if settings.model_mode == "tacc" and settings.tacc_protocol == "sdk":
+        model = Model(event, mode, ollama_model=ollama_model)
+        if model.mode == "ollama" and skill.get("requested_ollama_model"):
+            model.require_local_ollama_model()
+        vector_hits = checkpoint("vector_hits")
+        if vector_hits is None:
+            vector_hits = {}
+            vector_enabled = settings.contract_vector_search
+            if vector_enabled is None:
+                vector_enabled = model.mode == "ollama"
+            if model.mode != "demo" and vector_enabled:
+                event("retrieve", "使用 Ollama 和 FAISS 检索合同段落", settings.ollama_embedding_model)
+                try:
+                    vector_hits = vector_matches(paragraphs, skill, job.instruction, model)
+                except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                    event("retrieve", "向量检索不可用，继续使用其他候选来源", type(exc).__name__)
+            checkpoint("vector_hits", vector_hits)
+        if sdk_review:
             from .tacc_sdk import run_remote
             result = run_remote("review", event, checkpoint=checkpoint, paragraphs=paragraphs,
-                                skill=skill, instruction=job.instruction)
+                                skill=skill, instruction=job.instruction, vector_hits=vector_hits, auto_start=True)
         else:
-            model = Model(event, settings.model_mode)
             model.calls = checkpoint("model_calls") or []
             model.save_calls = lambda calls: checkpoint("model_calls", calls)
-            result = review(paragraphs, skill, job.instruction, model, checkpoint=checkpoint)
+            result = review(paragraphs, skill, job.instruction, model, checkpoint=checkpoint, vector_hits=vector_hits)
         result["seconds"] = round(time.perf_counter() - started, 3)
         report = report_text(contract.name, result) if result["rows"] else ""
         event("render", "保存审查结果", "")
@@ -112,6 +139,14 @@ def run_job(job_id, claim):
             if job.source == "email" and not db.scalar(select(Delivery).where(Delivery.job_id == job_id)):
                 db.add(Delivery(job_id=job_id, owner_id=job.owner_id))
             db.add(Event(job_id=job_id, stage="done", title="任务处理结束", detail=current.state))
+    except TaccServicePending as exc:
+        with session() as db:
+            job = db.get(Job, job_id)
+            if job and job.claim == claim:
+                defer_for_tacc(job)
+                job.updated = time.time()
+                if db.scalar(select(Event.id).where(Event.job_id == job_id, Event.stage == "tacc_service").limit(1)) is None:
+                    db.add(Event(job_id=job_id, stage="tacc_service", title=str(exc), detail=""))
     except Exception as exc:
         with session() as db:
             job = db.get(Job, job_id)
@@ -174,6 +209,7 @@ def mail_loop(stop):
     client = graph_client()
     while not stop.is_set():
         try:
+            remove_deleted_files()
             if not settings.app_demo and client.enabled:
                 with session() as db:
                     record = db.get(MailCursor, settings.graph_mailbox)
@@ -227,7 +263,8 @@ def run_assistant_once():
     with session() as db:
         db.execute(text("BEGIN IMMEDIATE"))
         run = db.scalar(select(AssistantRun).where((AssistantRun.state == "queued") |
-                        ((AssistantRun.state == "running") & (AssistantRun.lease < time.time()))).order_by(AssistantRun.created))
+                        (AssistantRun.state.in_(["running", "waiting_tacc"]) & (AssistantRun.lease < time.time())))
+                        .order_by(AssistantRun.created))
         if not run:
             return False
         if run.attempts >= 3:
@@ -268,12 +305,22 @@ def run_assistant_once():
             current = db.get(AssistantRun, run_id)
             if current.claim == claim:
                 current.state, current.result = "completed", dump(result)
+    except TaccServicePending as exc:
+        with session() as db:
+            current = db.get(AssistantRun, run_id)
+            if current.claim == claim:
+                defer_for_tacc(current)
+                events = json.loads(current.events)
+                if not events or events[-1]["stage"] != "tacc_service":
+                    events.append({"stage": "tacc_service", "title": str(exc), "detail": "", "created": time.time()})
+                    current.events = dump(events)
     except Exception as exc:
         with session() as db:
             current = db.get(AssistantRun, run_id)
             if current.claim == claim:
                 current.state = "failed"
-                current.error = str(exc)[:500] if isinstance(exc, ValueError) else type(exc).__name__ + "：助手执行失败，请检查模型或网络连接"
+                current.error = getattr(exc, "public_message", None) or (
+                    str(exc)[:500] if isinstance(exc, ValueError) else type(exc).__name__ + "：助手执行失败，请检查模型或网络连接")
     finally:
         stop.set()
         heartbeat_thread.join(timeout=2)

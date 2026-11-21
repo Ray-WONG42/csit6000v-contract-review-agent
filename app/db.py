@@ -67,6 +67,11 @@ class File(Base):
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
+class FileRemoval(Base):
+    __tablename__ = "file_removals"
+    path: Mapped[str] = mapped_column(String, primary_key=True)
+
+
 class Skill(Base):
     __tablename__ = "skills"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=identifier)

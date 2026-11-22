@@ -21,7 +21,7 @@ cp .env.example .env
 
 On Windows, use `python` and `.\.venv\Scripts\python.exe` as in the reproduction section below. `.env.example` sets `CONTRACT_VECTOR_SEARCH=1`. The offline demo does not call Ollama or TACC.
 
-Expected output of `demo.py` is a zero exit code and:
+Expected result: exit code 0. The command prints one JSON line per stage, then ends with:
 
 ```json
 {"status":"PASS","mode":"demo","tool_called":true,"artifact_count":1}

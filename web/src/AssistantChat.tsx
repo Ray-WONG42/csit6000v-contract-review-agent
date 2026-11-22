@@ -1,4 +1,4 @@
-import { t, useLanguage, LanguageSwitch, getLanguage } from "./i18n";
+import { t, useLanguage, LanguageSwitch, getLanguage, traceTitle, traceDetail } from "./i18n";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, Download,
@@ -217,7 +217,7 @@ export default function AssistantChat({
           {t(message.role === "assistant" && <div className="assistant-name"><div className="small-logo">C</div> {t("法务助手")}{t(message.pending && <LoaderCircle className="spin" size={14}/>)}</div>)}
           {t(!!message.events?.length && <details className="trace" open={message.pending}>
             <summary>{message.events.length} {t("条模型与工具记录")}</summary>
-            <div className="trace-list">{t(message.events.map((event, index) => <div key={index}><span className="trace-dot"/><div>{event.title}<small>{event.detail}</small></div></div>))}</div>
+            <div className="trace-list">{t(message.events.map((event, index) => <div key={index}><span className="trace-dot"/><div>{traceTitle(event)}{traceDetail(event) && <small>{traceDetail(event)}</small>}</div></div>))}</div>
           </details>)}
           <p className={message.error ? "error-text" : ""}>{t(message.text || (message.pending ? t("正在处理…") : ""))}</p>
           {t(!!message.output?.sources?.length && <div className="source-list"><strong>{t("本轮获取的来源")}</strong>{t(message.output.sources.map(source =>

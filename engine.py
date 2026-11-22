@@ -265,7 +265,7 @@ class Model:
         raw = json.dumps(body, ensure_ascii=False).encode()
         if len(raw) + settings.ollama_max_output_tokens > settings.ollama_context_limit:
             raise ValueError("请求超出 Ollama 的保守上下文预算，请调小分块或调整 OLLAMA_CONTEXT_LIMIT。")
-        self.event("model", "调用本地 Ollama 模型", phase)
+        self.event("model", "调用模型", "")
         try:
             data = self._ollama_json(settings, "/api/chat", settings.ollama_timeout, body)
         except urllib.error.HTTPError as exc:
@@ -336,7 +336,7 @@ class Model:
             headers = {"Content-Type": "application/json"}
             if key := (settings.llm_api_key if api else settings.tacc_api_key or getattr(settings, 'llm_api_key', '')):
                 headers["Authorization"] = f"Bearer {key}"
-            self.event("model", "调用 DeepSeek API" if urlsplit(url).hostname == "api.deepseek.com" else "调用 TACC 模型", phase)
+            self.event("model", "调用模型", "")
             request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 data = json.load(response)
@@ -756,13 +756,9 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
 def report_text(name, result):
     from app.localization import text_for
     tr = lambda value: text_for(value, result.get("language", "zh"))
-    mode = {"tacc": "TACC", "api": "API", "ollama": "本地 Ollama", "demo": "本地规则演示"}.get(
-        result.get("model_mode"), "本地规则演示")
-    if result.get("model_name"):
-        mode += " · " + result["model_name"]
     lines = ["# 合同审查报告", "", f"审查对象：{name}", "",
              "本报告供人工复核。未找到对应原文表示本次未检出。",
-             f"执行模式：{tr(mode)}", ""]
+             ""]
     for row in result["rows"]:
         state = {"found": "找到证据", "not_found": "未找到对应原文", "review": "待人工复核"}[row["status"]]
         lines.extend([f"## {row['label']}", state])
@@ -780,7 +776,7 @@ def report_text(name, result):
         lines.append("")
     if result.get("language") == "en":
         lines = [tr(line) for line in lines]
-        lines = [line.replace("# 合同审查报告", "# Contract Review Report").replace("审查对象：", "Contract: ").replace("执行模式：", "Execution mode: ").replace("## ", "## ").replace("清单判断：", "Assessment: ").replace("待核对：", "To verify: ").replace("建议问题：", "Suggested question: ").replace("核对项 · ", "Checklist item · ") for line in lines]
+        lines = [line.replace("# 合同审查报告", "# Contract Review Report").replace("审查对象：", "Contract: ").replace("清单判断：", "Assessment: ").replace("待核对：", "To verify: ").replace("建议问题：", "Suggested question: ").replace("核对项 · ", "Checklist item · ") for line in lines]
         for index, line in enumerate(lines):
             if line.startswith("## "): lines[index] = "## " + tr(line[3:])
             elif line.startswith("Assessment: "): lines[index] = "Assessment: " + tr(line[len("Assessment: "):])

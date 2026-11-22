@@ -1,5 +1,6 @@
 {
   "关键词检索": "Keyword search",
+  "调用模型": "Calling model",
   "TACC Qwen 已达到课程作业的一小时运行上限，服务已结束；请重新启动服务。": "The TACC Qwen service reached the course job's one-hour time limit. Restart the service to continue.",
   "TACC Qwen 服务已退出，请核对服务日志后重新启动。": "The TACC Qwen service has stopped. Check its job log and restart it.",
   "向量检索": "Vector search",

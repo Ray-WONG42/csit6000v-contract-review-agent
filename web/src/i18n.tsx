@@ -24,6 +24,12 @@ export function t<T>(value: T): T {
   const normalized = value.replace(/\s+/g, ' ').trim();
   return (dictionary[value] ?? dictionary[normalized] ?? value) as T;
 }
+export function traceTitle(event: { stage: string; title: string }) {
+  return t(event.stage === 'model' ? '调用模型' : event.title);
+}
+export function traceDetail(event: { stage: string; detail: string }) {
+  return event.stage === 'model' ? '' : t(event.detail);
+}
 export function LanguageSwitch({ onChange, floating = false }: {
   onChange: (value: Language) => Promise<void> | void;
   floating?: boolean;

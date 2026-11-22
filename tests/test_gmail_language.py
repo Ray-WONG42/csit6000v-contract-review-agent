@@ -57,7 +57,7 @@ def test_review_language_is_snapshotted_and_quotes_are_preserved(client):
     jid = client.post(f'/api/contracts/{cid}/jobs', json={'request_key': 'english-review', 'language': 'en'}).json()['id']
     with session() as db:
         assert json.loads(db.get(Job, jid).skill)['language'] == 'en'
-    result = {'language': 'en', 'model_mode': 'tacc', 'rows': [{'label': '自动续约', 'status': 'found',
+    result = {'language': 'en', 'model_mode': 'tacc', 'model_name': 'backend-private-model', 'rows': [{'label': '自动续约', 'status': 'found',
         'finding': 'At least 60 days notice.', 'evidence': [{'paragraph_id': 'P0001', 'quote': 'Notices require 60 days.'}],
         'assessment': '待核验', 'explanation': '', 'missing': [], 'question': ''}]}
     raw = docx_report(report_text('sample.txt', result), result)
@@ -65,6 +65,10 @@ def test_review_language_is_snapshotted_and_quotes_are_preserved(client):
         xml = document.read('word/document.xml').decode()
     assert 'Contract Review Report' in xml and 'Automatic renewal' in xml
     assert 'Notices require 60 days.' in xml and '合同风险表' not in xml
+    assert all(value not in xml for value in ('TACC', 'backend-private-model', 'Execution mode:'))
+    result['language'] = 'zh'
+    assert '执行模式' not in report_text('sample.txt', result)
+    assert 'backend-private-model' not in report_text('sample.txt', result)
 
 
 def test_english_assistant_prompt_and_list_tool_result(client, monkeypatch):

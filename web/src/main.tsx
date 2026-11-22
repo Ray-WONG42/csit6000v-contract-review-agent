@@ -1,4 +1,4 @@
-import { t, useLanguage, LanguageSwitch, getLanguage, setLanguage, clauseCount, type Language } from "./i18n";
+import { t, useLanguage, LanguageSwitch, getLanguage, setLanguage, clauseCount, traceTitle, traceDetail, type Language } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -936,8 +936,8 @@ function App() {
                                 }
                               />
                               <div>
-                                {e.title}
-                                {t(e.detail && <small>{e.detail}</small>)}
+                                {traceTitle(e)}
+                                {traceDetail(e) && <small>{traceDetail(e)}</small>}
                               </div>
                             </div>
                           )))}

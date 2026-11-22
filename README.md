@@ -346,6 +346,8 @@ Open `http://127.0.0.1:8765`. Keep the launcher open; Ctrl+C stops API/worker. I
 
 These are public test fixtures, not real account credentials. `APP_DEMO=1` enables demo identities; `MAIL_DEMO=1` keeps email local; `MODEL_MODE=demo` selects offline responses. Configure them independently.
 
+Sign in with one of the demo accounts above. To submit a contract, unzip `CUAD_eight_label_contracts.zip` in the repository root and upload one PDF from the `CUAD_eight_label_contracts/` folder.
+
 Do not overwrite an existing private `.env` when updating. Existing installations can run `python -m alembic upgrade head` before restarting. Use fresh `APP_DATA` for a separate installation and avoid conflicting launchers.
 
 ### 2. Configure a real independent API

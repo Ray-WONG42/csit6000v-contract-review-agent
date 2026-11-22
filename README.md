@@ -340,7 +340,7 @@ Open `http://127.0.0.1:8765`. Keep the launcher open; Ctrl+C stops API/worker. I
 
 Real use requires your own accounts. Legal users must register through the Web interface, verify their email address and set a password. The administrator account is initialized using `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the local `.env` file; its receiving mailbox requires separate Gmail authorization.
 
-The repository does not include real account credentials or mailbox authorization. Demo accounts apply only to local demo mode and cannot access the configured real-account installation. See **Real account setup** below.
+The repository does not include real account credentials or mailbox authorization. Demo accounts apply only to local demo mode and cannot access the configured real-account installation. See **Real account setup** below. Follow step 5, **Real account setup**, and register in the format given there. The repository addresses cannot be used.
 
 Do not overwrite an existing private `.env` when updating. Existing installations can run `python -m alembic upgrade head` before restarting. Use fresh `APP_DATA` for a separate installation and avoid conflicting launchers.
 

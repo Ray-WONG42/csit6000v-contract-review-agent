@@ -131,6 +131,13 @@ def test_failed_gpu_service_reports_memory_and_does_not_resubmit(monkeypatch, tm
         tacc_sdk.queued_service_base(None)
 
 
+def test_expired_service_reports_time_limit_without_claiming_memory_failure(monkeypatch):
+    monkeypatch.setattr(tacc_sdk, 'service_log', lambda _: 'JOB 123 CANCELLED DUE TO TIME LIMIT')
+    status = tacc_sdk.inspect_service('123')
+    assert status['state'] == 'failed' and not status['ready']
+    assert '一小时' in status['error'] and '显存' not in status['error']
+
+
 def test_automatic_service_honors_node_exclusion(monkeypatch, tmp_path):
     monkeypatch.setattr(tacc_sdk.settings, 'app_data', str(tmp_path))
     monkeypatch.setattr(tacc_sdk.settings, 'tacc_exclude_nodes', 'busy-node')

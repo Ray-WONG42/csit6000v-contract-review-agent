@@ -218,8 +218,12 @@ def inspect_service(job_id):
         log = ""
     if any(marker in log for marker in ("CLAUSE_SERVICE_EXIT", "CLAUSE_STARTUP_FAILURE", "Exited with exit code",
                                         "CANCELLED", "TIME LIMIT", "Finished server process", "Application shutdown complete")):
-        reason = ("TACC 分配的 GPU 可用显存不足，Qwen 未启动；请避开该节点后重新启动服务。"
-                  if "insufficient free memory" in log else "TACC Qwen 服务已退出，请核对服务日志后重新启动。")
+        if "insufficient free memory" in log:
+            reason = "TACC 分配的 GPU 可用显存不足，Qwen 未启动；请避开该节点后重新启动服务。"
+        elif "TIME LIMIT" in log:
+            reason = "TACC Qwen 已达到课程作业的一小时运行上限，服务已结束；请重新启动服务。"
+        else:
+            reason = "TACC Qwen 服务已退出，请核对服务日志后重新启动。"
         return {"ready": False, "state": "failed", "base_url": "", "error": reason}
     base = SERVICE_URL.search(log)
     if base and "Application startup complete" in log:

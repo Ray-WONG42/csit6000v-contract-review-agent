@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 from contextlib import contextmanager
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, text, inspect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 from sqlalchemy import String, Text, Float, Integer, UniqueConstraint
 from .config import settings
@@ -22,6 +22,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True)
     password: Mapped[str] = mapped_column(String)
     role: Mapped[str] = mapped_column(String, default="legal")
+    language: Mapped[str] = mapped_column(String, default="en", server_default="en")
     created: Mapped[float] = mapped_column(Float, default=time.time)
 
 
@@ -212,3 +213,10 @@ def dump(value):
 
 def initialize():
     Base.metadata.create_all(engine)
+    # Upgrade existing installations without resetting accounts or private data.
+    # API and worker can start together, so inspect under the SQLite write lock.
+    with engine.connect() as connection:
+        connection.execute(text("BEGIN IMMEDIATE"))
+        if "language" not in {column["name"] for column in inspect(connection).get_columns("users")}:
+            connection.execute(text("ALTER TABLE users ADD COLUMN language VARCHAR NOT NULL DEFAULT 'en'"))
+        connection.commit()

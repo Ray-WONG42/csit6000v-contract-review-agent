@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/language": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Language */
+        put: operations["update_language_api_auth_language_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/logout": {
         parameters: {
             query?: never;
@@ -623,7 +640,7 @@ export interface components {
         EmailInput: {
             /**
              * Language
-             * @default zh
+             * @default en
              * @enum {string}
              */
             language: "zh" | "en";
@@ -736,11 +753,19 @@ export interface components {
              */
             model_name: string;
         };
+        /** LanguageInput */
+        LanguageInput: {
+            /**
+             * Language
+             * @enum {string}
+             */
+            language: "zh" | "en";
+        };
         /** LoginInput */
         LoginInput: {
             /**
              * Language
-             * @default zh
+             * @default en
              * @enum {string}
              */
             language: "zh" | "en";
@@ -753,7 +778,7 @@ export interface components {
         RegisterInput: {
             /**
              * Language
-             * @default zh
+             * @default en
              * @enum {string}
              */
             language: "zh" | "en";
@@ -1137,6 +1162,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    update_language_api_auth_language_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanguageInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

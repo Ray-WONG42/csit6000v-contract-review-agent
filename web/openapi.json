@@ -256,6 +256,42 @@
         }
       }
     },
+    "/api/auth/language": {
+      "put": {
+        "summary": "Update Language",
+        "operationId": "update_language_api_auth_language_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanguageInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "summary": "Logout",
@@ -1377,7 +1413,7 @@
               "en"
             ],
             "title": "Language",
-            "default": "zh"
+            "default": "en"
           },
           "email": {
             "type": "string",
@@ -1617,6 +1653,23 @@
         ],
         "title": "JobView"
       },
+      "LanguageInput": {
+        "properties": {
+          "language": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "title": "Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "language"
+        ],
+        "title": "LanguageInput"
+      },
       "LoginInput": {
         "properties": {
           "language": {
@@ -1626,7 +1679,7 @@
               "en"
             ],
             "title": "Language",
-            "default": "zh"
+            "default": "en"
           },
           "email": {
             "type": "string",
@@ -1656,7 +1709,7 @@
               "en"
             ],
             "title": "Language",
-            "default": "zh"
+            "default": "en"
           },
           "email": {
             "type": "string",

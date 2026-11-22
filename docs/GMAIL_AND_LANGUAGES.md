@@ -83,10 +83,10 @@ Unregistered senders are not automatically provisioned or reviewed. Automatic re
 - When automatic review is disabled, intake without a valid ticket waits for confirmation in the workbench. The sender address alone never authorizes automatic processing.
 - The worker accepts one PDF, DOCX or TXT contract per message, with a 12 MB limit. A stable Gmail message ID prevents duplicate imports.
 - Replies go to the registered owner recorded by the application. A model cannot override the recipient.
-- English submission subjects include `[LANG=en]`; replies and newly generated reports use English. Original evidence is preserved.
+- English is the default. The top-right circular language button saves the signed-in account's preference for new chats, reports and automatic email reviews. Subject `[LANG=en]` or `[LANG=zh]` can override it for a single email. Original evidence is preserved.
 - With `MAIL_DEMO=1`, messages stay in the local demo outbox. No real email is sent.
 
-仅处理已注册法务用户的来件。`MAIL_AUTO_REVIEW=1` 时自动进行默认审查；关闭时需要绑定用户的一次性提交凭据，无凭据时需在页面确认。每封邮件一份合同，最多 12 MB。Gmail 消息 ID 用于去重；回邮收件人来自已登记用户，不能由模型指定。英文提交主题含 `[LANG=en]`。`MAIL_DEMO=1` 只写本地演示发件箱。
+仅处理已注册法务用户的来件。`MAIL_AUTO_REVIEW=1` 时自动进行默认审查；关闭时需要绑定用户的一次性提交凭据，无凭据时需在页面确认。每封邮件一份合同，最多 12 MB。Gmail 消息 ID 用于去重；回邮收件人来自已登记用户，不能由模型指定。默认英文；右上角圆形按钮保存账号语言，自动邮件审查及回邮跟随发送者设置，主题 `[LANG=en]` 或 `[LANG=zh]` 可单封覆盖。旧任务保留原语言。`MAIL_DEMO=1` 只写本地演示发件箱。
 
 Google Testing-mode authorizations may expire; repeat authorization when Google reports that the grant is invalid. Real email acceptance requires a controlled attachment email, observed ingestion, review completion and a received reply. Unit tests with synthetic responses are not real email acceptance.
 

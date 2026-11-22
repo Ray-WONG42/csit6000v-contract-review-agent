@@ -771,7 +771,8 @@ def report_text(name, result):
         lines.extend(f"{item['paragraph_id']} · {item['quote']}" for item in row["evidence"])
         lines.append("清单判断：" + row.get("assessment", "待核验"))
         lines.append(row.get("explanation", ""))
-        lines.extend(f"核对项 · {item['requirement']}：{item['assessment']}" for item in row.get("checklist", []))
+        lines.extend((f"Checklist item · {tr(item['requirement'])}: {tr(item['assessment'])}" if result.get("language") == "en"
+                      else f"核对项 · {item['requirement']}：{item['assessment']}") for item in row.get("checklist", []))
         if row["missing"]:
             lines.append("待核对：" + "、".join(row["missing"]))
         if row["question"]:

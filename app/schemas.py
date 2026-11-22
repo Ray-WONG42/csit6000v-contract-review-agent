@@ -4,7 +4,7 @@ from engine import LEGACY_RULES, RULES
 
 
 class EmailInput(BaseModel):
-    language: Literal["zh", "en"] = "zh"
+    language: Literal["zh", "en"] = "en"
     email: str = Field(max_length=254)
 
     @field_validator("email")
@@ -24,6 +24,10 @@ class RegisterInput(EmailInput):
 
 class LoginInput(EmailInput):
     password: str = Field(min_length=1, max_length=128)
+
+
+class LanguageInput(BaseModel):
+    language: Literal["zh", "en"]
 
 
 class CustomItem(BaseModel):

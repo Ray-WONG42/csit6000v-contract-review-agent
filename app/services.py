@@ -198,7 +198,7 @@ def graph_client():
     return Outlook()
 
 
-def send_mail(recipient, subject, body, file=None, in_reply_to=""):
+def send_mail(recipient, subject, body, file=None, in_reply_to="", language="zh"):
     if settings.demo_mail:
         with session() as db:
             db.add(LocalMail(recipient=recipient, subject=subject, body=body, file_id=file.id if file else ""))
@@ -210,7 +210,8 @@ def send_mail(recipient, subject, body, file=None, in_reply_to=""):
     if file:
         raw = (settings.data / file.path).read_bytes()
         if len(raw) > 2_500_000:
-            body += f"\n报告较大，请登录 {settings.app_public_url} 查看并下载。"
+            body += (f"\nThe report is too large to attach. Sign in at {settings.app_public_url} to view and download it."
+                     if language == "en" else f"\n报告较大，请登录 {settings.app_public_url} 查看并下载。")
         else:
             attachment = (file.name, raw)
     if in_reply_to and hasattr(client, "send_reply"):
@@ -235,9 +236,11 @@ def deliver_pending():
         file = db.get(File, job.report_file) if job.report_file else None
     try:
         result = json.loads(job.result)
-        message = result.get("message") or result.get("answer") or "合同处理已完成，报告见附件。"
-        subject = f"Contract review result [{job.id[:8]}]" if result.get("language") == "en" else f"合同审查结果 [{job.id[:8]}]"
-        status = send_mail(user.email, subject, message, file, in_reply_to=json.loads(job.skill).get("mail_message_id", ""))
+        language = json.loads(job.skill).get("language", "zh")
+        message = result.get("message") or result.get("answer") or (
+            "Contract review completed. See the attached report." if language == "en" else "合同处理已完成，报告见附件。")
+        subject = f"Contract review result [{job.id[:8]}]" if language == "en" else f"合同审查结果 [{job.id[:8]}]"
+        status = send_mail(user.email, subject, message, file, in_reply_to=json.loads(job.skill).get("mail_message_id", ""), language=language)
         error = ""
     except Exception as exc:
         import urllib.error

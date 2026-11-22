@@ -9,7 +9,7 @@ export async function api<T = any>(
   body?: unknown,
 ): Promise<T> {
   const multipart = body instanceof FormData;
-  if (body && !multipart && typeof body === "object" && (path.includes("/jobs") || path === "/assistant/runs" || path.startsWith("/auth/"))) body = { ...body, language: getLanguage() };
+  if (body && !multipart && typeof body === "object" && (path.includes("/jobs") || path === "/assistant/runs" || (path.startsWith("/auth/") && path !== "/auth/language"))) body = { ...body, language: getLanguage() };
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",

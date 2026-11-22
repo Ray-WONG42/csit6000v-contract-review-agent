@@ -114,7 +114,7 @@ These are defaults, not the required answer format for every question. A selecte
 - The sender must match a **registered legal account**. Intake and results belong to that account.
 - Each message must contain **one valid supported contract attachment**; multiple valid attachments are not silently merged.
 - Automatic intake uses the standard review instruction and the backend default model. A user's last browser model/Skill selection does not change this workflow.
-- Subject `[LANG=en]` requests English output; otherwise mail reviews default to Chinese. Quotations preserve their source language.
+- New email reviews use the sending legal account's saved interface/output language. Optional subject `[LANG=en]` or `[LANG=zh]` overrides the account preference for that message. Quotations preserve their source language.
 - The recipient comes from the account/intake record, **never from model output**.
 - Receipts, mailbox cursors and saved delivery states reduce repeated processing. Uncertain sends require reconciliation rather than blind retries.
 - Oversized report attachments use a login/download notice.
@@ -204,6 +204,8 @@ Skills and policies are version-snapshotted. `evidence-only@1` leaves compliance
 There are two roles, `legal` and `admin`. Multiple legal accounts have identical role permissions but independent records. Public registration cannot choose administrator privileges.
 
 The login screen supports email-only shortcuts for two legal accounts and an administrator. Clicking fills email without providing/changing the password; show/hide controls the password display.
+
+The circular language button is in the top-right corner. English is the default for a fresh browser and accounts without a saved preference. A signed-in selection is saved per account and controls new chat replies, generated reports and automatic review emails. Login restores that account's preference. Existing jobs keep their original language snapshot; changing the interface does not translate old reports or source quotations.
 
 Chat history persists locally in the browser. Backend runs/checkpoints can also contain private requests and observations. `APP_DATA` stores account data, original files and reports; default storage is local filesystem, not a provisioned object store. Selected text/prompts are sent to the chosen model backend, so local files do not imply local-only inference.
 

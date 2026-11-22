@@ -17,8 +17,6 @@ type Message = { id: string; role: "user" | "assistant"; text: string; run?: str
 type DeskContract = { id: string; name: string; company: string; created: number };
 
 const fileDate = { format: (value: number) => new Intl.DateTimeFormat(getLanguage() === "en" ? "en-GB" : "zh-HK", { month: "short", day: "numeric" }).format(value) };
-const skillPrompt = t("帮我创建并保存一个保密条款审查 Skill，核对保密主体、范围、例外和存续期。");
-const demoSkillPrompt = t("/创建Skill {\"name\":\"保密条款检查\",\"categories\":[],\"focus\":\"核对保密主体、范围、例外和存续期\",\"policy\":\"evidence-only@1\"}");
 
 export default function AssistantChat({
   userId, contractId = "", demo, modelMode, ollamaModel, onSkillsChanged, onReview,
@@ -30,6 +28,8 @@ export default function AssistantChat({
   deskContracts?: DeskContract[]; deskVisit?: number; onOpenContract?: (id: string) => void;
   onUpload?: () => void; onOpenSkills?: () => void;
 }) {
+  const skillPrompt = t("帮我创建并保存一个保密条款审查 Skill，核对保密主体、范围、例外和存续期。");
+  const demoSkillPrompt = t("/创建Skill {\"name\":\"保密条款检查\",\"categories\":[],\"focus\":\"核对保密主体、范围、例外和存续期\",\"policy\":\"evidence-only@1\"}");
   const indexKey = "assistant-index:" + userId + ":" + (contractId || "general");
   const [threads, setThreads] = useState<{ id: string; title: string }[]>(() => {
     try { return (persistChat && JSON.parse(localStorage.getItem(indexKey) || "null")) || [{id: "default", title: t("对话")}]; }

@@ -125,8 +125,12 @@ def run_job(job_id, claim):
         if result["language"] == "en":
             from .localization import text_for
             for row in result.get("rows", []):
-                for field in ("label", "assessment", "explanation"):
+                for field in ("label", "assessment", "explanation", "finding", "question"):
                     row[field] = text_for(row.get(field, ""), "en")
+                row["missing"] = [text_for(item, "en") for item in row.get("missing", [])]
+                for item in row.get("checklist", []):
+                    item["requirement"] = text_for(item["requirement"], "en")
+                    item["assessment"] = text_for(item["assessment"], "en")
             result["answer"] = "\n\n".join(row["label"] + ": " + (row.get("finding") or ("No supporting source found." if row["status"] == "not_found" else "Human review required.")) for row in result.get("rows", []))
         result["seconds"] = round(time.perf_counter() - started, 3)
         report = report_text(contract.name, result) if result["rows"] else ""
@@ -213,7 +217,9 @@ def receive_message(client, message):
         _, name, raw = attachments[0]
         contract = ingest(db, user, name, raw, "邮件导入")
         request = "标准合同审查" if settings.mail_auto_review else str(message.get("body", {}).get("content", ""))[:4000]
-        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id, language="en" if "[LANG=en]" in subject else "zh"),
+        language_match = re.search(r"\[LANG=(en|zh)\]", subject, re.I)
+        language = language_match[1].lower() if language_match else user.language
+        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id, language=language),
                          "email", "queued" if authorized else "awaiting_confirmation")
         snapshot = json.loads(job.skill)
         snapshot["mail_message_id"] = str(message.get("internetMessageId", ""))[:500]

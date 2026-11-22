@@ -1,9 +1,9 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import translations from './translations.json';
 export type Language = 'zh' | 'en';
 const dictionary: Record<string, string> = translations;
-let language: Language = 'zh';
-try { language = localStorage.getItem('clause-language') === 'en' ? 'en' : 'zh'; } catch { /* storage optional */ }
+let language: Language = 'en';
+try { language = localStorage.getItem('clause-language') === 'zh' ? 'zh' : 'en'; } catch { /* storage optional */ }
 document.documentElement.lang = language === "en" ? "en" : "zh-CN";
 const listeners = new Set<() => void>();
 export const getLanguage = () => language;
@@ -21,12 +21,26 @@ export function t<T>(value: T): T {
   const normalized = value.replace(/\s+/g, ' ').trim();
   return (dictionary[value] ?? dictionary[normalized] ?? value) as T;
 }
-export function LanguageSwitch() {
+export function LanguageSwitch({ onChange, floating = false }: {
+  onChange: (value: Language) => Promise<void> | void;
+  floating?: boolean;
+}) {
   const value = useLanguage();
-  return <div style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 10000, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 8, background: '#fff', color: '#263238', border: '1px solid #cbd5e1' }}>
-    <a href={`/api/templates/${value}/payment-skill.json`} download>{value === 'en' ? 'Skill template' : 'Skill 模板'}</a>
-    <a href={`/api/templates/${value}/review-request.txt`} download>{value === 'en' ? 'Request template' : '提问模板'}</a>
-    <select aria-label="Language / 语言" value={value} onChange={event => setLanguage(event.target.value as Language)}>
-    <option value="zh">中文</option><option value="en">English</option>
-  </select></div>;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const label = value === 'zh' ? 'Switch to English' : '切换为中文';
+  async function toggle() {
+    setPending(true);
+    setError('');
+    try { await onChange(value === 'zh' ? 'en' : 'zh'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Language could not be saved'); }
+    finally { setPending(false); }
+  }
+  return <span className={`language-control${floating ? ' language-control-floating' : ''}`}>
+    <button type="button" className="language-switch" aria-label={label}
+      title={label} disabled={pending} onClick={toggle} aria-busy={pending}>
+      <span aria-hidden="true">{value === 'zh' ? '中' : 'EN'}</span>
+    </button>
+    {error && <span className="language-switch-error" role="alert">{error}</span>}
+  </span>;
 }

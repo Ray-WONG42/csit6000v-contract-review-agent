@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import settings, ROOT
 from .db import initialize, session, User, Login, Code, Contract, File, Job, Event, Skill, Ticket, Delivery, Receipt, LocalMail, AssistantRun, dump
 from .security import current_user, legal_user, own, password_hash, password_matches, digest, code_digest, seed_users
-from .schemas import EmailInput, RegisterInput, LoginInput, SkillInput, JobInput, CompanyInput, ReportInput, ContractView, JobView, EventView, AssistantInput
+from .schemas import EmailInput, RegisterInput, LoginInput, LanguageInput, SkillInput, JobInput, CompanyInput, ReportInput, ContractView, JobView, EventView, AssistantInput
 from .services import (ACTIVE_ASSISTANT_STATES, ingest, create_job, contract_view, job_view, send_mail,
                        write_file, resolve_model_selection, tacc_configured, delete_history, graph_client)
 from engine import RULES, MAX_FILE, Model, docx_report
@@ -165,7 +165,7 @@ def register(body: RegisterInput, request: Request):
             if valid:
                 if db.scalar(select(User).where(User.email == body.email)):
                     raise HTTPException(409, "此邮箱已注册")
-                db.add(User(email=body.email, password=password_hash(body.password), role="legal"))
+                db.add(User(email=body.email, password=password_hash(body.password), role="legal", language=body.language))
                 db.delete(code)
     if not valid:
         raise HTTPException(422, "验证码无效、过期或尝试次数过多")
@@ -182,12 +182,19 @@ def login(body: LoginInput, request: Request, response: Response):
         token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         db.add(Login(token=digest(token), csrf=csrf, user_id=user.id, expires=time.time() + 86400))
         response.set_cookie("session", token, httponly=True, samesite="lax", secure=settings.app_secure_cookie, max_age=86400)
-        return {"id": user.id, "email": user.email, "role": user.role, "csrf": csrf}
+        return {"id": user.id, "email": user.email, "role": user.role, "language": user.language, "csrf": csrf}
 
 
 @app.get("/api/auth/me")
 def me(request: Request, user=Depends(current_user)):
-    return {"id": user.id, "email": user.email, "role": user.role, "csrf": request.state.csrf}
+    return {"id": user.id, "email": user.email, "role": user.role, "language": user.language, "csrf": request.state.csrf}
+
+
+@app.put("/api/auth/language")
+def update_language(body: LanguageInput, user=Depends(current_user)):
+    with session() as db:
+        db.get(User, user.id).language = body.language
+    return {"language": body.language}
 
 
 @app.post("/api/auth/logout")

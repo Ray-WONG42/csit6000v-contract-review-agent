@@ -1,4 +1,4 @@
-import { t, useLanguage, LanguageSwitch, getLanguage } from "./i18n";
+import { t, useLanguage, LanguageSwitch, getLanguage, setLanguage, type Language } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -38,7 +38,7 @@ import AssistantChat from "./AssistantChat";
 import ReviewPanes from "./ReviewPanes";
 import MailPanel from "./MailPanel";
 
-type User = { id: string; email: string; role: string; csrf: string };
+type User = { id: string; email: string; role: string; csrf: string; language: Language };
 type Contract = components["schemas"]["ContractView"];
 type Evidence = components["schemas"]["EvidenceView"];
 type Row = {
@@ -102,19 +102,19 @@ const activeStates = [
   "rendering",
 ];
 const statusLabel: Record<string, string> = {
-  queued: t("排队中"),
-  waiting_tacc: t("等待学校 GPU 集群"),
-  tacc_client: t("等待 TACC 回复"),
-  parsing: t("解析合同"),
-  surveying: t("通读合同"),
-  extracting: t("提取条款"),
-  validating: t("验证证据"),
-  rendering: t("生成报告"),
-  completed: t("已完成"),
-  partial: t("部分待复核"),
-  failed: t("处理失败"),
-  needs_input: t("待补充"),
-  awaiting_confirmation: t("来件待确认"),
+  queued: "排队中",
+  waiting_tacc: "等待学校 GPU 集群",
+  tacc_client: "等待 TACC 回复",
+  parsing: "解析合同",
+  surveying: "通读合同",
+  extracting: "提取条款",
+  validating: "验证证据",
+  rendering: "生成报告",
+  completed: "已完成",
+  partial: "部分待复核",
+  failed: "处理失败",
+  needs_input: "待补充",
+  awaiting_confirmation: "来件待确认",
 };
 
 function App() {
@@ -225,6 +225,7 @@ function App() {
   }, [user]);
   function signIn(value: User) {
     setCsrf(value.csrf);
+    setLanguage(value.language || "en");
     setUser(value);
     setError("");
     userRef.current = value;
@@ -235,6 +236,15 @@ function App() {
     } catch {
       setModelPreference("");
     }
+  }
+  async function chooseLanguage(language: Language) {
+    const current = userRef.current;
+    if (current) {
+      await api("/auth/language", "PUT", { language });
+      if (userRef.current?.id !== current.id) return;
+      setUser(previous => previous?.id === current.id ? { ...previous, language } : previous);
+    }
+    setLanguage(language);
   }
   useEffect(() => {
     if (!canSelectModel) return;
@@ -541,12 +551,15 @@ function App() {
 
   if (!user)
     return (
+      <>
       <LoginPage
         config={config}
         onLogin={signIn}
         error={error}
         setError={setError}
       />
+      <LanguageSwitch onChange={chooseLanguage} floating />
+      </>
     );
   return (
     <div className={"app " + (!sidebar ? "collapsed" : "")}>
@@ -733,6 +746,7 @@ function App() {
             >
               <Plus size={15} /> {t("添加合同")}</button>
           ))}
+          <LanguageSwitch onChange={chooseLanguage} />
         </header>
         <input
           ref={fileInput}
@@ -1117,7 +1131,7 @@ function App() {
                         <div className="empty-folio" aria-hidden="true"><FileCheck2 size={30} strokeWidth={1.4} /></div>
                         <p>
                           {t(running
-                            ? statusLabel[job!.state] || t("审查处理中")
+                            ? t(statusLabel[job!.state] || "审查处理中")
                             : job?.error || job?.result?.message || t("提交审查后，可在这里逐条核对判断与原文。"))}
                         </p>
                       </div>
@@ -1789,4 +1803,4 @@ function SkillForm({
   );
 }
 
-createRoot(document.getElementById("root")!).render(<><App /><LanguageSwitch /></>);
+createRoot(document.getElementById("root")!).render(<App />);

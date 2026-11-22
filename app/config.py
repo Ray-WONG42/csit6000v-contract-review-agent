@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     ollama_embedding_timeout: int = 120
     admin_email: str = ""
     admin_password: str = ""
+    login_legal_email: str = ""
+    login_other_legal_email: str = ""
+    login_admin_email: str = ""
     mail_provider: Literal["outlook", "gmail"] = "outlook"
     mail_demo: bool | None = None
     gmail_mailbox: str = ""

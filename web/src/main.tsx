@@ -23,8 +23,9 @@ import {
   LoaderCircle,
   Pencil,
   Paperclip,
-  Copy,
   Trash2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { api, setCsrf, fileUrl } from "./api";
 import { clearContractHistory, loadLocal, pruneReviewHistory, saveLocal, LocalConversation } from "./storage";
@@ -35,6 +36,7 @@ import "./review.css";
 import "./login.css";
 import AssistantChat from "./AssistantChat";
 import ReviewPanes from "./ReviewPanes";
+import MailPanel from "./MailPanel";
 
 type User = { id: string; email: string; role: string; csrf: string };
 type Contract = components["schemas"]["ContractView"];
@@ -148,8 +150,6 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("");
   const [artifacts, setArtifacts] = useState<any[]>([]);
-  const [localMails, setLocalMails] = useState<any[]>([]);
-  const [ticket, setTicket] = useState<any>(null);
   const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 900px)").matches);
   const [sidebar, setSidebar] = useState(() => !window.matchMedia("(max-width: 900px)").matches);
   const drawerClose = useRef<HTMLButtonElement>(null);
@@ -506,8 +506,6 @@ function App() {
       setNotice("");
       setSkills([]);
       setArtifacts([]);
-      setTicket(null);
-      setLocalMails([]);
       setLocal({ messages: [], draft: "" });
       setJob(null);
       setCsrf("");
@@ -654,15 +652,9 @@ function App() {
               <>
                 <button onClick={() => setModal("skills")}>
                   <Settings2 size={16} /> {t("我的 Skills")}</button>
-                <button
-                  onClick={async () => {
-                    setModal("mail");
-                    if (config?.demo) setLocalMails(await api("/mail/local"));
-                  }}
-                >
-                  <Mail size={16} /> {t("邮件处理")}</button>
               </>
             ))}
+            <button onClick={() => setModal("mail")}><Mail size={16} /> {t("邮件处理")}</button>
             <div className="account">
               <span className="avatar">
                 {t(user.role === "admin" ? (
@@ -1382,86 +1374,7 @@ function App() {
                 }}
               />
             ))}
-            {t(modal === "mail" && (
-              <>
-                <span className="eyebrow">MAIL INTEGRATION</span>
-                <h2>{t("邮件处理")}</h2>
-                <p>{t("收件邮箱 ·")} {config?.mailbox}</p>
-                <p>{config?.mail_demo ? t("当前为演示收发，完成邮箱连接后才会真实收发。") : t("真实邮箱收发已启用")}</p>
-                <p className="quiet">
-                  {config?.mail_auto_review ? t("每 60 秒检查新邮件，自动审阅已注册法务发送的合同并回邮风险报告，无需提交凭据。") : t("使用已注册邮箱发送合同。生成的提交凭据可让来件自动开始处理，有效期 24 小时且仅使用一次。")}</p>
-                <button
-                  className="secondary"
-                  onClick={async () => {
-                    try {
-                      setTicket(await api("/mail/ticket", "POST"));
-                    } catch (e) {
-                      fail(e);
-                    }
-                  }}
-                >
-                  {t("生成邮件提交主题")}</button>
-                {t(ticket && (
-                  <div className="ticket">
-                    <small>
-                      {t("收件邮箱 ·")}{t(ticket.mailbox || t("尚未配置邮箱"))}
-                    </small>
-                    <code>{ticket.subject}</code>
-                    <button
-                      onClick={() =>
-                        navigator.clipboard.writeText(ticket.subject)
-                      }
-                    >
-                      <Copy size={14} /> {t("复制")}</button>
-                  </div>
-                ))}
-                {t(config?.demo && config?.mail_demo && (
-                  <>
-                    <h3>{t("演示邮箱")}</h3>
-                    <p className="quiet">
-                      {t("模拟已授权发件。结果保存到下面的本地发件箱。")}</p>
-                    <input
-                      aria-label={t("模拟邮箱上传")}
-                      type="file"
-                      accept=".pdf,.docx,.txt"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        try {
-                          const f = new FormData();
-                          f.append("file", file);
-                          f.append("instruction", t("标准合同审查"));
-                          const r = await api("/demo/mail", "POST", f);
-                          await refreshContracts();
-                          const list = await api<Contract[]>("/contracts");
-                          const c = list.find((x) => x.id === r.contract_id);
-                          if (c) await selectContract(c);
-                          setModal("");
-                        } catch (err) {
-                          fail(err);
-                        }
-                      }}
-                    />
-                    <button
-                      className="text-button"
-                      onClick={async () =>
-                        setLocalMails(await api("/mail/local"))
-                      }
-                    >
-                      {t("刷新发件箱")}</button>
-                    {t(localMails.map((m) => (
-                      <div className="mail-card" key={m.id}>
-                        <strong>{m.subject}</strong>
-                        <p>{t(m.body.slice(0, 250))}</p>
-                        {t(m.file_id && (
-                          <a href={fileUrl(m.file_id, true)}>{t("下载附件")}</a>
-                        ))}
-                      </div>
-                    )))}
-                  </>
-                ))}
-              </>
-            ))}
+            {modal === "mail" && <MailPanel key={user.id} role={user.role} mailbox={config?.mailbox || ""} />}
           </div>
         </dialog>
       ))}
@@ -1481,17 +1394,12 @@ function LoginPage({
   setError: (s: string) => void;
 }) {
   const [register, setRegister] = useState(false);
-  const [email, setEmail] = useState("legal@example.com");
-  const [password, setPassword] = useState("LegalDemo2026!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState("");
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (config && !config.demo) {
-      setEmail("");
-      setPassword("");
-    }
-  }, [config]);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -1543,15 +1451,19 @@ function LoginPage({
             />
           </label>
           <label>
-            {t("密码")}<input
-              type="password"
+            {t("密码")}<span className="entry-password-field"><input
+              type={showPassword ? "text" : "password"}
               required
               minLength={register ? 10 : 1}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={register ? "new-password" : "current-password"}
               placeholder={register ? t("至少 10 个字符") : t("输入密码")}
-            />
+            /><button type="button" className="entry-password-toggle"
+                aria-label={t(showPassword ? "隐藏密码" : "显示密码")} aria-pressed={showPassword}
+                onClick={() => setShowPassword(value => !value)}>
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button></span>
           </label>
           {t(register && (
             <div className="entry-code">
@@ -1607,22 +1519,18 @@ function LoginPage({
           >
             {t(register ? t("已有账户？返回登录") : t("使用邮箱验证码注册"))}
           </button>
-          {t(config?.demo && (
+          {t(config?.login_accounts?.length > 0 && (
             <div className="entry-demo">
-              <div className="entry-demo-title"><ShieldCheck size={15} aria-hidden="true" />{t("本地演示账号")}</div>
+              <div className="entry-demo-title"><ShieldCheck size={15} aria-hidden="true" />{t("快捷账户")}</div>
               <div className="entry-demo-options">
-                {t([
-                  [t("法务"), "legal@example.com", "LegalDemo2026!"],
-                  [t("另一法务"), "other@example.com", "OtherDemo2026!"],
-                  [t("总账户"), "admin@example.com", "AdminDemo2026!"],
-                ].map(([label, address, pass]) => (
+                {t(config.login_accounts.map(({label, email: address}: {label: string; email: string}) => (
                   <button
                     type="button"
                     key={label}
+                    title={address}
                     aria-pressed={!register && email === address}
                     onClick={() => {
                       setEmail(address);
-                      setPassword(pass);
                       setRegister(false);
                     }}
                   >
@@ -1630,7 +1538,7 @@ function LoginPage({
                   </button>
                 )))}
               </div>
-              <small>{t("本地演示发件箱 ·")}{t(modelLabel(config.model_mode, config.model_name))}</small>
+              <small>{t("仅填写邮箱，密码由用户自行输入。")}</small>
             </div>
           ))}
         </form>

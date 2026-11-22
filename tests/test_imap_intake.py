@@ -80,3 +80,34 @@ def test_automatic_messages_do_not_trigger_reply_loops():
     message.set_content('Automatic reply')
     message.add_attachment(b'file', maintype='application', subtype='pdf', filename='report.pdf')
     assert not GmailIMAP.normalize(message, 'imap:1:1')['hasAttachments']
+
+
+def test_pre_registration_mail_can_be_replayed_once_after_registration(client, sample, monkeypatch):
+    from app.db import Receipt, User
+    from app.security import password_hash
+    monkeypatch.setattr(settings, 'mail_auto_review', True)
+    monkeypatch.setattr(settings, 'mail_provider', 'gmail')
+    monkeypatch.setattr(settings, 'gmail_mailbox', 'mailbox@example.test')
+    attachments = []
+    class Inbox:
+        def attachments(self, message):
+            attachments.append(message)
+            return [('a', 'synthetic.txt', sample)]
+        def mark_read(self, message): pass
+    message = {'id': 'new-user-mail', 'from': {'emailAddress': {'address': 'new-legal@example.test'}},
+               'subject': 'Contract', 'body': {'content': ''}}
+    receive_message(Inbox(), message)
+    receive_message(Inbox(), message)
+    assert not attachments
+    with session() as db:
+        assert db.scalar(select(Receipt)).state == 'ignored'
+        db.add(User(email='new-legal@example.test', password=password_hash('Synthetic2026!'), role='legal'))
+    receive_message(Inbox(), message)
+    receive_message(Inbox(), message)
+    with session() as db:
+        receipt = db.scalar(select(Receipt))
+        assert receipt.state == 'accepted' and receipt.note == ''
+        jobs = list(db.scalars(select(Job)))
+        assert len(jobs) == 1 and jobs[0].id == receipt.job_id
+        assert db.get(User, jobs[0].owner_id).email == 'new-legal@example.test'
+    assert len(attachments) == 1

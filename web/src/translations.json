@@ -258,5 +258,21 @@
   "每 60 秒检查新邮件，自动审阅已注册法务发送的合同并回邮风险报告，无需提交凭据。": "Checks new email every 60 seconds, automatically reviews contracts from registered legal users and emails back the risk report. No ticket required.",
   "当前为演示收发，完成邮箱连接后才会真实收发。": "Mail is currently simulated. Real delivery starts after mailbox setup.",
   "真实邮箱收发已启用": "Live mailbox intake and delivery enabled",
-  "邮件导入": "Email intake"
+  "邮件导入": "Email intake",
+  "快捷账户": "Quick accounts",
+  "仅填写邮箱，密码由用户自行输入。": "Fills email only. Enter your own password.",
+  "隐藏密码": "Hide password",
+  "显示密码": "Show password",
+  "主账户邮箱": "Administrator mailbox",
+  "近 24 小时收到的邮件": "Mail received in the last 24 hours",
+  "正在读取邮件…": "Loading messages…",
+  "当前为演示邮箱，未读取真实来件。": "Demo mailbox: no live messages are read.",
+  "近 24 小时没有收到邮件。": "No messages received in the last 24 hours.",
+  "无主题": "No subject",
+  "未读": "Unread",
+  "已进入审查": "Accepted for review",
+  "未登记发件人": "Unregistered sender",
+  "附件不符合要求": "Unsupported attachment submission",
+  "加载更多": "Load more",
+  "刷新": "Refresh"
 }

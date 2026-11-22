@@ -7,13 +7,13 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, Response, Depends, UploadFile, File as Upload, Form
+from fastapi import FastAPI, HTTPException, Request, Response, Depends, UploadFile, File as Upload, Form, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, delete, text
 from sqlalchemy.exc import IntegrityError
 from .config import settings, ROOT
-from .db import initialize, session, User, Login, Code, Contract, File, Job, Event, Skill, Ticket, Delivery, LocalMail, AssistantRun, dump
+from .db import initialize, session, User, Login, Code, Contract, File, Job, Event, Skill, Ticket, Delivery, Receipt, LocalMail, AssistantRun, dump
 from .security import current_user, legal_user, own, password_hash, password_matches, digest, code_digest, seed_users
 from .schemas import EmailInput, RegisterInput, LoginInput, SkillInput, JobInput, CompanyInput, ReportInput, ContractView, JobView, EventView, AssistantInput
 from .services import (ACTIVE_ASSISTANT_STATES, ingest, create_job, contract_view, job_view, send_mail,
@@ -63,7 +63,12 @@ def throttle(request, action, limit=15):
 
 @app.get("/api/config")
 def config():
+    shortcuts = [("法务", settings.login_legal_email), ("另一法务", settings.login_other_legal_email),
+                 ("总账户", settings.login_admin_email)]
+    if settings.app_demo and not any(email for _, email in shortcuts):
+        shortcuts = [("法务", "legal@example.com"), ("另一法务", "other@example.com"), ("总账户", "admin@example.com")]
     return {"demo": settings.app_demo, "model_mode": settings.model_mode,
+            "login_accounts": [{"label": label, "email": email} for label, email in shortcuts if email],
             "model_name": settings.ollama_model if settings.model_mode == "ollama" else settings.model_name if settings.model_mode == "api" else settings.tacc_model,
             "api_model_name": settings.model_name, "api_configured": bool(settings.llm_base_url and settings.llm_api_key and settings.model_name),
             "categories": [{"id": key, "label": value[0]} for key, value in RULES.items()],
@@ -351,6 +356,31 @@ def admin_artifacts(contract_id: str, user=Depends(current_user)):
             raise HTTPException(404, "合同不存在")
         return [{"id": f.id, "name": f.name, "kind": f.kind, "created": f.created}
                 for f in db.scalars(select(File).where(File.contract_id == contract_id, File.kind.in_(["input", "report"])).order_by(File.created))]
+
+
+@app.get("/api/mail/inbox")
+def recent_inbox(page: str = Query(default="", max_length=2048), user=Depends(current_user)):
+    if user.role != "admin":
+        raise HTTPException(403, "仅总账户可查看收件箱")
+    if settings.demo_mail:
+        return {"items": [], "next_page": "", "demo": True}
+    client = graph_client()
+    if not client.enabled or not hasattr(client, "recent_inbox"):
+        raise HTTPException(503, "收件箱预览需要已授权的 Gmail HTTPS API")
+    try:
+        result = client.recent_inbox(page=page)
+    except Exception:
+        raise HTTPException(503, "暂时无法读取收件箱，请稍后刷新或检查邮箱连接")
+    fields = ("id", "subject", "sender", "sender_name", "received_at", "unread")
+    result = {"items": [{k: item[k] for k in fields if k in item} for item in result["items"]],
+              "next_page": result.get("next_page", ""), "window_start": result.get("window_start"), "demo": False}
+    # Only mail metadata is exposed. Never return bodies, verification codes or private job traces.
+    with session() as db:
+        for item in result["items"]:
+            receipt = db.get(Receipt, digest(settings.mailbox + ":" + item["id"]))
+            item["intake_state"] = receipt.state if receipt else ""
+            item["intake_note"] = receipt.note if receipt else ""
+    return result
 
 
 @app.post("/api/mail/ticket")

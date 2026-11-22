@@ -5,6 +5,7 @@ import os
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import parseaddr
 
@@ -64,6 +65,28 @@ class Gmail:
              headers={'Authorization': 'Bearer ' + self.token(), 'Content-Type': 'application/json'})
         with self.open(req) as response:
             return json.load(response)
+
+    def recent_inbox(self, page=''):
+        cutoff = int(time.time()) - 86400
+        query = {'q': 'in:inbox after:' + str(cutoff), 'maxResults': 30}
+        if page:
+            query['pageToken'] = page
+        listing = self.api('/messages?' + urllib.parse.urlencode(query))
+        def metadata(item):
+            params = urllib.parse.urlencode({'format': 'metadata',
+                'metadataHeaders': ['From', 'Subject'], 'fields': 'id,internalDate,labelIds,payload/headers'}, doseq=True)
+            raw = self.api('/messages/' + urllib.parse.quote(item['id'], safe='') + '?' + params)
+            received = int(raw.get('internalDate', 0)) / 1000
+            if received < cutoff or 'INBOX' not in raw.get('labelIds', []):
+                return None
+            headers = {h['name'].lower(): h['value'] for h in raw.get('payload', {}).get('headers', [])}
+            name, address = parseaddr(headers.get('from', ''))
+            return {'id': raw['id'], 'subject': headers.get('subject', ''), 'sender': address,
+                    'sender_name': name, 'received_at': received, 'unread': 'UNREAD' in raw.get('labelIds', [])}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            items = [m for m in pool.map(metadata, listing.get('messages', [])) if m is not None]
+        return {'items': sorted(items, key=lambda m: m['received_at'], reverse=True),
+                'next_page': listing.get('nextPageToken', ''), 'window_start': cutoff, 'demo': False}
 
     def delta(self, cursor=''):
         if not cursor.startswith('gmailh:'):

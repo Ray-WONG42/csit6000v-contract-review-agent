@@ -1,5 +1,21 @@
 # Gmail and language setup / Gmail 与中英文配置
 
+## Account shortcuts and inbox / 快捷账户与收件列表
+
+Set `LOGIN_LEGAL_EMAIL`, `LOGIN_OTHER_LEGAL_EMAIL` and `LOGIN_ADMIN_EMAIL` in the private `.env`
+to configure the three email-only login shortcuts. They never fill or change a password. Passwords
+start blank and can be shown/hidden on the login page. Do not put real account addresses or passwords
+in published source files; the example configuration leaves these fields empty.
+
+The Mail panel shows only the project receiving address to legal users. Administrators can refresh
+and page through inbox metadata from the last 24 hours using the authorized Gmail HTTPS adapter.
+The list does not fetch or expose email bodies, verification codes, private chat or tool traces, and
+viewing it does not mark messages read. This panel does not implement a compose/send action.
+
+本机 `.env` 的三个 LOGIN 邮箱配置决定快捷入口；点击仅填邮箱，保留用户手动输入的密码。
+普通法务的邮件面板仅显示主账户收件邮箱。总账户可查看近 24 小时来件的元数据及接收状态，
+不读取邮件正文，不改变已读状态，也不提供写邮件功能。修改邮箱配置后重启项目服务。
+
 ## Language / 语言
 
 Use the bottom-right **中文 / English** selector. The preference is saved in this browser.

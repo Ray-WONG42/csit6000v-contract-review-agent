@@ -793,3 +793,8 @@ mark {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.mail-inbox-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mail-inbox-list { max-height: 55vh; overflow: auto; overflow-wrap: anywhere; }
+.mail-inbox-list .mail-card { border-top: 1px solid #d7dfd8; padding: 14px 0; }
+.mail-inbox-list .mail-card p { margin: 5px 0; }
+.mail-unread { color: #256953; font-size: 12px; }

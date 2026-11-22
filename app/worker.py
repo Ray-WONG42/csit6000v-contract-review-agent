@@ -176,8 +176,11 @@ def run_job(job_id, claim):
 def receive_message(client, message):
     message_id = settings.mailbox + ":" + message["id"]
     receipt_id = digest(message_id)
+    def can_retry(receipt):
+        return receipt and receipt.state == "ignored" and receipt.note == "未登记发件人"
     with session() as db:
-        if db.get(Receipt, receipt_id):
+        existing = db.get(Receipt, receipt_id)
+        if existing and not can_retry(existing):
             return
     sender = message.get("from", {}).get("emailAddress", {}).get("address", "").lower()
     if sender == settings.mailbox.lower():
@@ -188,15 +191,20 @@ def receive_message(client, message):
     with session() as db:
         user = db.scalar(select(User).where(User.email == sender, User.role == "legal"))
         if not user:
-            db.add(Receipt(id=receipt_id, state="ignored", note="未登记发件人"))
+            if not existing:
+                db.add(Receipt(id=receipt_id, state="ignored", note="未登记发件人"))
             return
     attachments = list(client.attachments(message["id"]))
     with session() as db:
         db.execute(text("BEGIN IMMEDIATE"))
-        if db.get(Receipt, receipt_id):
+        receipt = db.get(Receipt, receipt_id)
+        if receipt and not can_retry(receipt):
             return
         if len(attachments) != 1:
-            db.add(Receipt(id=receipt_id, state="rejected", note="每封邮件需要一份有效合同"))
+            if receipt:
+                receipt.state, receipt.note = "rejected", "每封邮件需要一份有效合同"
+            else:
+                db.add(Receipt(id=receipt_id, state="rejected", note="每封邮件需要一份有效合同"))
             return
         token_match = re.search(r"\[TOKEN=([A-Za-z0-9_-]+)\]", subject)
         ticket = db.get(Ticket, digest(token_match[1])) if token_match else None
@@ -212,7 +220,10 @@ def receive_message(client, message):
         job.skill = dump(snapshot)
         if ticket_valid:
             ticket.used = 1
-        db.add(Receipt(id=receipt_id, state="accepted", job_id=job.id))
+        if receipt:
+            receipt.state, receipt.job_id, receipt.note = "accepted", job.id, ""
+        else:
+            db.add(Receipt(id=receipt_id, state="accepted", job_id=job.id))
     client.mark_read(message["id"])
 
 

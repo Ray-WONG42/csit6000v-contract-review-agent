@@ -4,7 +4,7 @@ Evidence-grounded contract review, general tool-assisted conversation and automa
 
 **Updated: 2026-11-22**
 
-The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible API and local Ollama are supported for development. Offline demo mode verifies the engineering workflow without claiming live model reasoning.
+The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible API and local Ollama are supported for development.
 
 ## Getting Started Instructions
 

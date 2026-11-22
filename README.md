@@ -106,22 +106,10 @@ These are defaults, not the required answer format for every question. A selecte
 
 **The configured administrator mailbox automatically processes contract attachments from registered legal accounts and emails the generated result back to the registered original sender.** With `MAIL_POLL_SECONDS=60`, the worker checks for new mail approximately once per minute while running.
 
-```mermaid
-sequenceDiagram
-    participant L as Registered legal user
-    participant G as Administrator Gmail mailbox
-    participant W as Background worker
-    participant A as Review pipeline and default model
-    participant D as Private job and report storage
-    L->>G: Email one supported contract attachment
-    W->>G: Poll new inbox messages
-    G-->>W: Metadata and attachment
-    W->>D: Match registered sender; save intake receipt
-    W->>A: Default standard contract review
-    A->>D: Save verified findings and final report
-    W->>G: Send saved report to registered original sender
-    G-->>L: Review result email
-```
+1. A registered legal user emails one supported contract attachment to the administrator mailbox.
+2. The worker polls new messages, matches the sender to the registered account and saves an intake receipt.
+3. The default review pipeline processes the contract and saves verified findings and the final report.
+4. The worker emails the saved result back to the registered original sender.
 
 - The sender must match a **registered legal account**. Intake and results belong to that account.
 - Each message must contain **one valid supported contract attachment**; multiple valid attachments are not silently merged.

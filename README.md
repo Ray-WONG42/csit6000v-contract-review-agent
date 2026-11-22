@@ -1,118 +1,312 @@
 # Contract Review Agent — CSIT6000V
 
-English main guide with Chinese explanations. The assessed model backend is **TACC Qwen**.
-中文对照：课程验收必须使用 TACC；本地规则演示只验证工程流程，不替代真实模型推理。
+Evidence-grounded contract review, general tool-assisted conversation and automatic email intake in a three-panel Web workspace.
+
+**English main guide · 中文对照说明 · Updated: 2026-11-22**
+
+The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible API and local Ollama are supported for development. Offline demo mode verifies the engineering workflow without claiming live model reasoning.
+
+## Contents
+
+- [Project Overview](#project-overview)
+- [Architecture](#architecture)
+- [Environment Prerequisite](#environment-prerequisite)
+- [Hardware note](#hardware-note)
+- [Step-by-step Reproduction](#step-by-step-reproduction)
+- [Demo Test Case](#demo-test-case)
+- [Agent Configuration Guide](#agent-configuration-guide)
+- [Troubleshooting FAQ](#troubleshooting-faq)
+- [License](#license)
 
 ## Project Overview
 
-A web and CLI agent for evidence-grounded contract review and general legal-team conversation.
-It reads text PDF, DOCX and TXT files, surveys semantic sections, retrieves candidate paragraphs,
-extracts eight standard clause categories or user-defined checks, validates quotations, expands
-context when necessary, and creates downloadable Word reports. A general assistant can search
-public information, read HTTPS pages, manage private Skills, read owned contracts and start reviews.
+### Capabilities
 
-Set `MODEL_MODE` in `.env` to select an execution mode:
+| Capability | Implemented behavior | 中文说明 |
+|---|---|---|
+| Contract intake | Web upload or administrator-mailbox attachment | 网页与邮件双入口 |
+| Standard review | Eight clause categories, verified quotations and downloadable DOCX | 默认八类条款审查与风险报告 |
+| Targeted review | Current question, custom Skill focus and custom checks | 支持时间点、付款等专项问题 |
+| General conversation | Answer questions; search public information; read pages/contracts; save Skills; create documents | 不限于合同审查，按需调用工具 |
+| Evidence | Stable paragraph IDs, original locations and quotation validation | 引用必须与原文对应 |
+| Retrieval | BM25 plus optional vector search; section-aware chunks and bounded expansion | 关键词与向量候选可合并使用 |
+| Three-panel Web | History/company grouping, current chat/tool events, source/risk table/report panel | 左侧历史、中间对话、右侧阅读编辑 |
+| Bilingual UI | Chinese/English interface, output instructions and preset files | 中英文切换；原文引用不翻译 |
+| Private Skills | Account-owned reusable checks with version snapshots | 私有 Skill 可复用，任务保留版本 |
+| Automatic email | Review registered legal users' contracts and reply with saved results | **管理员邮箱自动收合同、审查并回邮** |
+| Execution harness | Durable jobs, checkpoints, ownership, submission and delivery records | 权限隔离、恢复、去重及状态追踪 |
 
-- `MODEL_MODE=demo`: deterministic, offline workflow check. Slash commands execute real local tools;
-  ordinary natural-language conversation requires a model and deliberately fails clearly here.
-- `MODEL_MODE=ollama`: local natural-language chat and contract review through Ollama. The default model is `gemma4:12b`.
-- `MODEL_MODE=tacc`: real model planning and extraction. The course SDK route submits a GPU service
-  and separate CPU clients. Availability depends on course authorization, queue and GPU memory.
+### Agent workflow
 
-工作流：Agent 根据当前请求规划，执行经过参数与权限校验的工具，检查返回结果是否足够，
-必要时继续调用工具，最后输出回答或有原文证据的风险表。每轮最多调用六次工具。
-反思是观察结果后的下一步判断，不是展示模型私有思维，也不是另一名独立 Agent。
+The Planner selects an answer or a tool. The Tool Executor validates arguments and account permissions, executes the action and returns an observation. The next planning step checks whether the result is sufficient and whether another tool fits the remaining budget. The Responder returns an answer, evidence or downloadable artifact.
+
+“Reflection” means assessing observations inside this bounded loop. It is not a separate critic agent or a display of private chain-of-thought. Each turn allows at most **six tool executions**, followed by a final-answer-only step.
 
 ```mermaid
 flowchart TD
-    U[User query / verified email / contract upload] --> P[Planner: choose final answer or one tool]
-    P -->|JSON tool action| V[Validate schema, enabled tool, account permission]
-    V --> T[Tool Executor]
-    T --> O[Observation: result or explicit error]
-    O --> R[Reflection: check evidence, adequacy, remaining budget]
-    R -->|Need more context; budget remains| P
-    R -->|Enough evidence or budget exhausted| A[Responder: answer, sources, artifacts, limitations]
-    P -->|Conversation needs no tool| A
-    T --> C[Contract survey and BM25 retrieval]
-    C --> E[Qwen extraction and quote validation]
-    E -->|Unresolved| X[Expand adjacent paragraphs and bounded retry]
-    X --> O
-    E --> O
+    U["User request"] --> P["Planner: answer or choose tool"]
+    P -->|Tool action JSON| V["Validate schema, enabled tool and ownership"]
+    V --> T["Tool Executor"]
+    T --> O["Observation: result or explicit error"]
+    O --> R["Reflection: evidence sufficient and budget available?"]
+    R -->|Need more information| P
+    R -->|Ready or budget exhausted| A["Responder: answer, sources and artifacts"]
+    P -->|No tool needed| A
+    T --> C["Contract review pipeline"]
+    C --> O
 ```
 
-Outputs support preliminary human review, not a determination of legal enforceability or audit compliance.
-No real customer contracts, credentials, model weights or private conversation records belong in Git.
+中文：先理解当前需求，再调用工具，读取结果后决定继续检索、补查或回答。界面展示处理阶段和工具记录，不展示模型私有思维。
+
+### Contract processing
+
+```mermaid
+flowchart TD
+    I["Web upload or accepted email"] --> F["Validate file and parse text"]
+    F --> ID["Normalize text; stable paragraph IDs and locations"]
+    ID --> S["Scope: standard categories, question or Skill"]
+    S --> K["BM25 keyword candidates"]
+    S --> E{"Vector search enabled and available?"}
+    E -->|Yes| V["Ollama embeddings and per-contract FAISS"]
+    E -->|No| M["Merge and bound available candidates"]
+    V --> M
+    K --> M
+    ID --> H["Section-aware chunks; optional survey hints"]
+    H --> M
+    M --> L["Model extraction with bounded context"]
+    L --> Q["Verify source IDs and exact normalized quotes"]
+    Q -->|Unresolved and retry remains| X["Expand neighboring paragraphs"]
+    X --> L
+    Q -->|Verified or explicitly unresolved| A["Policy annotation and missing facts"]
+    A --> O["Risk table, citations and DOCX"]
+    O --> W["Owned Web record"]
+    O --> MAIL["Email jobs: return saved report to registered sender"]
+```
+
+The optimized API/TACC path normally merges retrieval candidates and batches built-in checks in groups of up to three. It does **not** require an extra whole-contract model survey before every review. Other paths can survey section-aware chunks. Oversized extraction requests are split into smaller candidate groups; each group's evidence is verified separately before merging.
+
+中文：不是每次都把全文塞进上下文，也不是固定先让 Qwen 通读全文。正常路径先检索再提取，必要时补查相邻段落或拆分请求。
+
+### Default categories and targeted questions
+
+| ID | Category | 中文 |
+|---|---|---|
+| `termination` | Termination | 合同终止 |
+| `liability_cap` | Liability cap | 责任上限 |
+| `governing_law` | Governing law | 适用法律 |
+| `automatic_renewal` | Automatic renewal | 自动续约 |
+| `audit_rights` | Audit rights | 审计权 |
+| `assignment` | Assignment | 转让 |
+| `insurance` | Insurance | 保险 |
+| `agreement_date` | Agreement date | 协议日期 |
+
+These are defaults, not the required answer format for every question. A selected Skill can specify categories, focus, custom items and a policy. Current instructions can add a targeted question. Unsupported scope, such as tracked changes to the original contract or multi-contract comparison, returns a clarification instead of pretending the operation succeeded.
+
+### Automatic administrator-mailbox review
+
+**The configured administrator mailbox automatically processes contract attachments from registered legal accounts and emails the generated result back to the registered original sender.** With `MAIL_POLL_SECONDS=60`, the worker checks for new mail approximately once per minute while running.
+
+```mermaid
+sequenceDiagram
+    participant L as Registered legal user
+    participant G as Administrator Gmail mailbox
+    participant W as Background worker
+    participant A as Review pipeline and default model
+    participant D as Private job and report storage
+    L->>G: Email one supported contract attachment
+    W->>G: Poll new inbox messages
+    G-->>W: Metadata and attachment
+    W->>D: Match registered sender; save intake receipt
+    W->>A: Default standard contract review
+    A->>D: Save verified findings and final report
+    W->>G: Send saved report to registered original sender
+    G-->>L: Review result email
+```
+
+- The sender must match a **registered legal account**. Intake and results belong to that account.
+- Each message must contain **one valid supported contract attachment**; multiple valid attachments are not silently merged.
+- Automatic intake uses the standard review instruction and the backend default model. A user's last browser model/Skill selection does not change this workflow.
+- Subject `[LANG=en]` requests English output; otherwise mail reviews default to Chinese. Quotations preserve their source language.
+- The recipient comes from the account/intake record, **never from model output**.
+- Receipts, mailbox cursors and saved delivery states reduce repeated processing. Uncertain sends require reconciliation rather than blind retries.
+- Oversized report attachments use a login/download notice.
+- Initial synchronization establishes a baseline rather than processing all historical mail. Register first, then send a new message.
+- API and worker must remain running; a browser tab alone does not poll the mailbox.
+
+中文：法务注册并验证邮箱后，将合同发到管理员邮箱，后台自动抓取、默认审查、保存风险报告并回邮。管理员可看最近一天收件的元数据和处理状态；普通法务只看到管理员收件地址，不开放主邮箱的收件列表。
 
 ## Architecture
 
-This is **one bounded tool-calling agent plus a review pipeline**, not a multi-agent chat system.
-There are no separate agent-role files or agent-to-agent communication claims.
+This is **one bounded tool-calling agent plus a review pipeline and durable harness**, not a multi-agent message system.
 
-| Component | Implementation | Responsibility / 中文说明 |
+### Components and technology stack
+
+| Layer | Implementation | Responsibility |
 |---|---|---|
-| Planner | `app/assistant.py`, `prompts/assistant_system.txt` | JSON action selection; 普通聊天或选择下一工具 |
-| Tool Executor | `app/assistant.py`, `app/web_tools.py` | Eight validated, account-scoped tools; 工具参数及权限校验 |
-| Memory | `web/src/storage.ts`, `app/db.py`, worker checkpoints | Browser history + private task recovery; 浏览器会话与服务端任务恢复 |
-| Retriever | `engine.py`, `app/retrieval.py` | Stable paragraph IDs, BM25, optional BGE-M3 / FAISS retrieval, and adjacent expansion |
-| Responder | `engine.py`, `app/assistant.py` | Validate quotes, return sources, create reports; 证据校验与文件输出 |
-| Model transport | `engine.py`, `app/tacc_sdk.py`, `tacc/client/remote.py` | HTTP JSON or authorized course SDK jobs |
-| Harness | `app/worker.py`, `tests/`, `evals/` | Leases, replay, bounded retries, synthetic tests and evaluation |
-| Web/API | `web/src/`, `app/main.py` | React three-panel workbench and FastAPI |
-| Mail | `mailbox.py`, worker | Optional Microsoft Graph ingestion and replies to verified senders |
+| Web | React 19, TypeScript, Vite 6; `web/src/` | Three-panel UI, bilingual interface, local account-scoped history |
+| API | FastAPI, Pydantic; `app/main.py` | Sessions, upload/download, ownership, jobs, Skills and mail metadata |
+| Planner / Tool Executor | `app/assistant.py`, `app/web_tools.py` | JSON planning, schemas, tool execution and bounded Web access |
+| Review / Responder | `engine.py` | Scope, extraction, quote verification, policy annotation and reports |
+| Retriever | `engine.py`, `app/retrieval.py` | BM25, optional Ollama/FAISS, semantic chunks and expansion |
+| Memory | Browser IndexedDB/localStorage; SQLAlchemy/SQLite WAL | UI history and private backend task recovery |
+| Harness | `app/worker.py`, `app/services.py` | Leases, checkpoints, retries, intake and delivery |
+| Model transport | `engine.py`, `app/tacc_sdk.py`, `tacc/` | Independent API, Ollama and course SDK |
+| Mail | `gmailbox.py`, `gmail_imap.py`, `mailbox.py` | Gmail HTTPS OAuth, IMAP/SMTP alternative, Outlook Graph adapter |
+| Prompt/templates | `prompts/`, `templates/zh/`, `templates/en/` | External instructions and bilingual examples |
+| Verification | `tests/`, `scripts/`, `evals/run.py` | Synthetic regression, diagnostics and experiments |
+| Packaging | `Dockerfile`, `compose.yaml`, `deploy/` | API/worker containers with shared storage |
 
-Admin visibility is limited to original contracts and final reports across accounts. Ordinary legal
-users access their own records. Admin cannot browse other users' private chats, traces, Skills or drafts.
-Chat remains in the browser; backend runs/checkpoints can contain request text and are private too.
+API and worker are separate processes using a SQLite-backed queue. Redis/Celery are not required. FastAPI serves the committed frontend and relative `/api` routes from one origin.
 
-See [directory tree and submission manifest](docs/PACKAGING.md), including commit/private/generated markers.
+### Retrieval implementation
+
+The code has **two candidate retrieval channels**, which can be combined. Section-aware chunking and neighboring-paragraph expansion support the review workflow; they are not separate frontend search modes.
+
+| Aspect | BM25 keyword retrieval | Vector retrieval |
+|---|---|---|
+| Code | `engine.Retrieval` | `app/retrieval.py: vector_matches` |
+| Representation | Term/document frequency and paragraph length | Dense Ollama embeddings |
+| Strength | Explicit clause terms and lexical overlap | Semantic and cross-language similarity |
+| Tokenization | Latin alphanumeric tokens; no Chinese segmentation | Multilingual embedding model |
+| Index | In-memory paragraph statistics | Per-contract in-memory FAISS `IndexFlatIP` |
+| Ranking | BM25 formula | Normalized inner product, equivalent to cosine ranking |
+| Citation identity | Original paragraph IDs | Fragment hits mapped back to paragraph IDs |
+| Extra service | None | Local Ollama plus downloaded embedding model |
+
+Vector input uses up-to-700-character fragments with a 600-character stride, embedded in batches of 16. Up to 16 fragment hits are deduplicated to up to four paragraph IDs per query. Candidate merging alternates lexical/vector rankings, removes duplicates and bounds the result. Provenance can include `keyword`, `vector`, `survey`, `fallback` and `adjacent`.
+
+| Configuration | Behavior |
+|---|---|
+| `CONTRACT_VECTOR_SEARCH=0` | Non-vector candidates, survey hints where applicable and adjacent expansion |
+| `CONTRACT_VECTOR_SEARCH=1` | Enable vector candidates alongside BM25 with API, TACC or Ollama |
+| Not set | Defaults enabled in Ollama mode; explicitly enable for API/TACC |
+| Embedding unavailable | Record fallback and continue with other candidates |
+| Offline demo | No real embedding-model dependency |
+
+Default embedding model: **`embeddinggemma:300m-qat-q4_0`**, approximately 239 MB; the supplied check verifies 768-dimensional vectors. It is independent of the chat model, so local embeddings can support API or TACC reviews.
+
+There is no persistent cross-contract knowledge base or vector-only frontend selector. Generic `EMBEDDING_*`, `VECTOR_STORE_PATH` and `VECTOR_PERSIST` fields are reserved; the actual adapter uses `OLLAMA_EMBEDDING_*` and an in-memory index.
+
+中文：按实际实现描述 BM25 和可选向量候选的合并。语义分块组织文本，补查扩展上下文；不要把它们硬命名成两种独立检索模式。中文问题查英文合同，建议启用向量通道。
+
+### Evidence, policy and output states
+
+Parsing creates stable IDs such as `P0001` and source locations. Quotations must match normalized text from a paragraph actually supplied to that extraction call. Invalid IDs or invented quotes cannot become accepted evidence.
+
+| State | Meaning |
+|---|---|
+| Row `found` | Verified evidence extracted; does not itself mean legal compliance |
+| Row `not_found` | No supported evidence found |
+| Row `review` | Extraction/verification unresolved |
+| Job `completed` / `partial` | Complete / some checks unresolved |
+| Job `failed` / `needs_input` | Execution failed / clarification required |
+
+Skills and policies are version-snapshotted. `evidence-only@1` leaves compliance to human review. `supplier-demo@1` includes a narrow automatic-renewal example: an explicit, unambiguous calendar-day notice period of at least 30 days meets that demonstration rule. Missing/conflicting facts remain unresolved. These are not a complete market audit standard or legal certification.
+
+### Permissions and storage
+
+| Resource | Legal user | Administrator |
+|---|---|---|
+| Original input / final report | Own records | Across accounts |
+| Private chat / task traces | Own records | No cross-user access |
+| Private Skills / drafts | Own records | No cross-user access |
+| Administrator inbox metadata | No; shows administrator address | Recent 24-hour list |
+| Login shortcuts | Email only; user enters password | Same behavior |
+
+There are two roles, `legal` and `admin`. Multiple legal accounts have identical role permissions but independent records. Public registration cannot choose administrator privileges.
+
+The login screen supports email-only shortcuts for two legal accounts and an administrator. Clicking fills email without providing/changing the password; show/hide controls the password display.
+
+Chat history persists locally in the browser. Backend runs/checkpoints can also contain private requests and observations. `APP_DATA` stores account data, original files and reports; default storage is local filesystem, not a provisioned object store. Selected text/prompts are sent to the chosen model backend, so local files do not imply local-only inference.
+
+### Context and recovery harness
+
+- Preserve the current question; consider up to eight prior turns, keeping the latest two and compressing earlier relevant content into extractive summaries.
+- Deduplicate tool observations and pack compact recent results. Full checkpoints remain private.
+- Paginate contract reads with `start`, `limit`, `query` and `next_start`; expose coverage and truncation metadata.
+- Compact tool schemas/JSON without removing validation; reserve output and serialization margin.
+- Use a conservative UTF-8 size bound, not an exact model tokenizer. Reduce summaries/excerpts before sending; report irreducible overflow explicitly.
+- Split oversized extraction groups, validate each group's quotes and merge evidence.
+- Persist request identity, job leases, checkpoints and SDK submission receipts. Unknown submissions require inspection/adoption.
+- Track delivery separately from review completion; network ambiguity prevents a general exactly-once delivery guarantee.
+
+See [context management](docs/CONTEXT_MANAGEMENT.md).
+
+### Directory tree and Git boundaries
+
+```text
+.
+├── README.md, LICENSE, NOTICE, AGENTS.md       [C] documentation and terms
+├── .env.example, .gitignore, .dockerignore     [C] safe templates/exclusions
+├── requirements.txt, requirements-lock.txt    [C] exact Python pins
+├── demo.py, run_agent.sh                      [C] offline entry points
+├── engine.py, prompt_loader.py               [C] review engine
+├── gmailbox.py, gmail_imap.py, mailbox.py      [C] mail adapters
+├── app/                                      [C] API, planner, worker, persistence
+├── prompts/                                  [C] external prompt templates
+├── templates/{zh,en}/                        [C] bilingual example inputs
+├── web/
+│   ├── src/, package.json, package-lock.json [C] frontend source/lock
+│   ├── openapi.json                          [C] generated API schema
+│   ├── dist/                                [C] prebuilt public frontend
+│   └── node_modules/                        [P] installed dependencies
+├── tacc/{serve,client,probe}/                 [C] course submission logic
+├── scripts/, tests/, fixtures/, evals/        [C] checks and synthetic examples
+├── migrations/, deploy/, Dockerfile          [C] database/deployment support
+├── compose.yaml, docs/                       [C] deployment and further guides
+├── .env                                      [P] private configuration
+├── data/                                     [P] accounts, contracts, reports, OAuth, logs
+├── .runtime/, .venv/, release/                [P] local runtime/environment/archive
+└── models/, weights/, vector_store/           [P] excluded if created locally
+```
+
+`[C]` must be committed; `[P]` must stay private/untracked. Generated `web/dist` and `web/openapi.json` are deliberately committed. Full exclusions: [.gitignore](.gitignore). Public manifest: [PACKAGING.md](docs/PACKAGING.md). Never upload the whole working directory indiscriminately.
 
 ## Environment Prerequisite
 
-- Git and **Python 3.12**. Tested runtime: Python 3.12.14. A clean venv is required.
-- Exact Python dependencies are in `requirements.txt` and `requirements-lock.txt` (identical pins).
-  Main packages: FastAPI 0.162.7, SQLAlchemy 2.1.8, pypdf 7.1.0, python-docx 1.2.0,
-  rank-bm25 0.2.2, httpx 0.28.1. Do not mix dependencies from unrelated projects.
-- The prebuilt `web/dist/` is committed; **Node is not needed** to run the packaged Web demo.
-  Frontend development needs Node 22+ and `npm ci` using `web/package-lock.json`.
-- Real course inference additionally requires Linux/WSL, your own authenticated official `tcloud` SDK,
-  access to the course bootstrap and Qwen runtime, and scheduler resources.
-- Demo uses BM25 without an embedding model. Hybrid retrieval uses a per-contract FAISS index in memory.
-- The existing repository's optional CUAD archive uses Git LFS. It is not needed for startup or synthetic
-  acceptance tests; do not require users to download it to run the demo. Actual dataset evaluation needs
-  its own download, license review and held-out annotations.
-- Web search uses Bing RSS or optional `BRAVE_SEARCH_KEY`. Public HTTPS access is required only for web tools.
-  Outlook is optional and needs a dedicated mailbox plus Microsoft Graph authorization.
-- No SerpAPI integration, arbitrary code interpreter or unrestricted shell tool is implemented.
+- **Git and Python 3.12**, tested interpreter 3.12.14. Use a dedicated venv.
+- Exact dependency pins: [requirements.txt](requirements.txt), [requirements-lock.txt](requirements-lock.txt).
+- No Node required for the packaged Web. Frontend development needs Node 22+ and `npm ci` using the lockfile.
+- Real TACC: your own course authorization, official `tcloud` SDK, Linux/WSL and course runtime.
+- Optional embeddings: Ollama and the embedding model. No persistent knowledge-base import step.
+- Real email/Web tools require their own authorization/network access.
+- Optional CUAD data uses Git LFS and is unnecessary for startup or synthetic tests.
 
-| LLM backend | Actual support |
-|---|---|
-| TACC Qwen via SDK | Course path; real run requires authorized resources, not bundled credentials |
-| Course-approved OpenAI-compatible HTTP / vLLM | Transport implemented; supply endpoint/model; not automatically reachable from a laptop |
-| OpenAI / LiteLLM compatible endpoint | Same JSON HTTP transport can be configured technically; not the course acceptance route; not live-validated here |
-| Anthropic native Messages API | Not implemented; cannot use its native URL with this transport |
-| Ollama | Native local chat API for general chat and contract review |
+| Dependency | Version | Use |
+|---|---|---|
+| FastAPI / Uvicorn | 0.162.7 / 0.54.0 | API/server |
+| SQLAlchemy / Alembic | 2.1.8 / 1.20.1 | Persistence/migrations |
+| Pydantic | 2.14.3 | Typed validation |
+| pypdf / python-docx | 7.1.0 / 1.2.0 | Parsing/Word output |
+| FAISS CPU / NumPy | 1.16.0 / 2.5.4 | Vector indexing |
+| httpx / pytest | 0.28.1 / 9.2.0 | HTTP/tests |
 
-中文：不要把“协议兼容”理解成“这些服务均已验收”。课程仍以真实 TACC 结果为准。
+`rank-bm25` is installed, but runtime scoring is implemented in `engine.Retrieval`. Frontend exact dependency resolutions are in `web/package-lock.json`.
+
+| `MODEL_MODE` | Backend | Requirements |
+|---|---|---|
+| `demo` | Deterministic offline | Workflow check; not general natural-language reasoning |
+| `api` | OpenAI-compatible HTTP, including configured DeepSeek | `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_NAME` |
+| `tacc` | Course Qwen SDK; approved HTTP transport also available | Authorized SDK and available cluster service |
+| `ollama` | Native local Ollama chat | Running daemon and downloaded chat model |
+
+Compatible vLLM/LiteLLM endpoints can use the HTTP adapter if they satisfy its chat and JSON requirements. Compatibility does not mean every provider was live-tested. Native Anthropic Messages is unsupported. Search uses Bing RSS or optional Brave; no SerpAPI or unrestricted code interpreter is exposed.
 
 ## Hardware note
 
-Local CLI, API, browser, parsing and BM25 are CPU workloads; no local GPU is required.
-The current course launcher requests **two GPUs**, uses tensor parallelism 2, 16K context,
-single concurrency and 55% vLLM memory utilization. This budget does not guarantee availability:
-startup checks require at least 14,000 MiB free on each allocated GPU. Shared usage can still change.
-The supervisor terminates this job's server process group when the job ends; it does not kill other users' processes.
+The Web/API, parsing and BM25 are CPU workloads. **No local GPU is required for API/TACC inference.** FAISS uses the CPU package; local embeddings require Ollama and memory for the small embedding model.
 
-For Ollama mode, install Ollama and download the model separately. Memory requirements depend on the
-model, quantization and configured context. Keep Ollama model files outside this repository.
+The course launcher requests two GPUs, tensor parallelism 2, 16K context, single concurrency and 55% vLLM memory utilization. Startup checks require at least 14,000 MiB free on each allocated GPU. Availability can change on the shared cluster. Cleanup targets this job's own process group, not other users' processes.
 
-中文：本机无需显卡；模型在 TACC 上运行。排队和显存不足属于外部资源条件，不能靠本地安装依赖解决。
+Optional local chat defaults to `gemma4:12b`. Memory depends on quantization/context. A local chat model is unnecessary when using API/TACC plus local embeddings. Never commit model weights.
 
 ## Step-by-step Reproduction
 
-Run each command from the indicated directory. Paths below are relative to the clone.
-Choose **one** platform block. These commands do not contain a real API key.
+### 1. Clone, install and start offline
 
-### Windows PowerShell: Git + Python only
+Choose a platform. Ensure the version command shows Python 3.12.x.
+
+**Windows PowerShell**
 
 ```powershell
 git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
@@ -125,7 +319,7 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe scripts/launch.py
 ```
 
-### Linux/macOS: Git + Python only
+**Linux / macOS**
 
 ```bash
 git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
@@ -138,264 +332,353 @@ cp .env.example .env
 .venv/bin/python scripts/launch.py
 ```
 
-`python --version` / `python3 --version` must show 3.12.x; otherwise select an installed Python 3.12.
-The API initializes schema and local demo accounts at startup. CLI demo uses a temporary database,
-disposes connections and deletes it afterwards. No knowledge-base import/index build command is needed.
-`python scripts/make_fixtures.py` regenerates only the bundled synthetic fixtures if desired.
+Open `http://127.0.0.1:8765`. Keep the launcher open; Ctrl+C stops API/worker. In subsequent commands, `python` means the venv interpreter above.
 
-Open `http://127.0.0.1:8765`. Demo login: `legal@example.com` / `LegalDemo2026!`.
-Other demo accounts: `other@example.com` / `OtherDemo2026!`, admin `admin@example.com` / `AdminDemo2026!`.
-These are public local demo credentials, never production credentials. Stop with Ctrl+C in the launcher.
-For database migrations on an existing installation use `python -m alembic upgrade head` inside the venv.
+| Public offline demo account | Demo password |
+|---|---|
+| `legal@example.com` | `LegalDemo2026!` |
+| `other@example.com` | `OtherDemo2026!` |
+| `admin@example.com` | `AdminDemo2026!` |
 
-### Optional local model with Ollama
+These are public test fixtures, not real account credentials. `APP_DEMO=1` enables demo identities; `MAIL_DEMO=1` keeps email local; `MODEL_MODE=demo` selects offline responses. Configure them independently.
 
-Open Ollama and check `ollama list` for `gemma4:12b`. If the model is missing, run `ollama pull gemma4:12b`.
-Set the following in the project's `.env`:
+Do not overwrite an existing private `.env` when updating. Existing installations can run `python -m alembic upgrade head` before restarting. Use fresh `APP_DATA` for a separate installation and avoid conflicting launchers.
+
+### 2. Configure a real independent API
+
+Edit private `.env` using the provider's actual base URL, key and available model:
 
 ```dotenv
-APP_DEMO=1
-MODEL_MODE=ollama
-OLLAMA_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=gemma4:12b
+MODEL_MODE=api
+LLM_BASE_URL=https://api.example.com/v1
+LLM_API_KEY=
+MODEL_NAME=
+LLM_TEMPERATURE=0
+LLM_CONTEXT_LIMIT=65536
+LLM_MAX_OUTPUT_TOKENS=4000
+LLM_TIMEOUT=90
 ```
 
-Run `.venv/bin/python scripts/check_connections.py --live` on macOS/Linux, or use the `.venv\Scripts\python.exe`
-interpreter on Windows. A successful response includes `ollama_test: true`. Restart the launcher and refresh
-the workbench. The model selector in the header lists local chat models installed on `OLLAMA_URL`.
-The selected model applies to new chats and reviews and is saved in the current browser for that account.
-`OLLAMA_MODEL` sets the default model. Load new chat models with `ollama pull <model>` and refresh the page.
-`OLLAMA_TIMEOUT`, `OLLAMA_CONTEXT_LIMIT` and `OLLAMA_MAX_OUTPUT_TOKENS` set the timeout and model budgets.
-The same menu offers **Qwen · TACC** when the workbench can use the course SDK. The first request
-submits the Qwen service job if needed. Chat and review requests wait for the scheduler and resume
-when the service is ready. `MODEL_MODE` sets the default backend for the menu.
+The URL is a placeholder, not a working service. Use an API base, not a browser chat page. Match limits to the real provider. Restart API/worker and run `python scripts/check_connections.py --live`.
 
-### Hybrid contract retrieval
+The selector keeps API and Qwen TACC separate. Choosing API does not submit TACC jobs. The backend default model also controls unattended email review.
 
-In Ollama mode, contract reviews use BM25 and vector search by default. Run `ollama pull embeddinggemma:300m-qat-q4_0`
-to install the embedding model if it is missing. `OLLAMA_EMBEDDING_MODEL` and `OLLAMA_EMBEDDING_TIMEOUT`
-configure the embedding call to `OLLAMA_URL`. FAISS searches only the current contract. The report UI
-shows whether BM25, vector search, or both found each matching citation.
-If vector search is unavailable, the review continues with the other candidate sources and records the
-fallback in the job trace. Set `CONTRACT_VECTOR_SEARCH=0` to disable it, or set it to `1` to enable
-it with TACC or the independent API route. The TACC SDK path computes vectors on the application host and passes ranked paragraph IDs
-along with the review request. Demo mode runs offline.
+### 3. Enable local vector retrieval
 
-The default multilingual embedding model is about 239 MB; it is separate from the chat model.
-`python scripts/check_embeddings.py` verifies real local embeddings and Chinese-to-English retrieval
-without submitting a TACC job. Long paragraphs are embedded as overlapping fragments while retaining
-their original paragraph IDs for quotation verification. No persistent vector database is required.
+Install/start Ollama, then:
 
-中文：先执行 `ollama pull embeddinggemma:300m-qat-q4_0`，再在本机 `.env` 设置
-`CONTRACT_VECTOR_SEARCH=1`。执行 `python scripts/check_embeddings.py` 验证向量和跨语言检索。
-向量在本机生成，切换 DeepSeek / TACC 不需要更换嵌入模型；未下载模型时会明确记录回退。
+```bash
+ollama pull embeddinggemma:300m-qat-q4_0
+ollama list
+python scripts/check_embeddings.py
+```
 
-### Required course path: activate real TACC
+Configure:
 
-`TACC_SDK_READ_TIMEOUT=60` controls each SDK status/log read (minimum 30 seconds).
-WSL plus the course SSH gateway can take over 15 seconds even for a healthy status request;
-this budget is separate from the model inference timeout. Read retries never resubmit jobs.
-If a service fails because its allocated GPU has insufficient free memory, the error is shown
-explicitly and automatic requests stop until the service is restarted. An optional
-`TACC_EXCLUDE_NODES=node-a,node-b` applies to both automatic and command-line service starts;
-use only nodes that you have verified are unsuitable. Remove an exclusion when it is no longer needed.
+```dotenv
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_EMBEDDING_MODEL=embeddinggemma:300m-qat-q4_0
+OLLAMA_EMBEDDING_TIMEOUT=120
+CONTRACT_VECTOR_SEARCH=1
+```
 
-If a review's candidate paragraphs exceed the configured request budget, the engine recursively
-reviews smaller groups, validates each group's quotations against the paragraphs it actually read,
-then merges the evidence. It never silently truncates the candidates. A single paragraph or request
-metadata that still cannot fit is reported explicitly; this does not increase the course context limit.
+Restart the application. The check verifies real vectors and Chinese-to-English retrieval without submitting TACC work. No persistent database import/build is needed.
 
-中文：SDK 状态查询与模型推理使用不同超时配置。若服务因显存不足退出，先核对日志、按需设置
-`TACC_EXCLUDE_NODES`，再运行 `Start-TACC.cmd`；不要反复创建相同请求。已有作业提交结果不确定时，
-先核对自己的作业并使用 `scripts/tacc_service.py adopt 作业编号` 接回，不要重复提交。
+For local chat too, run `ollama pull gemma4:12b`, set `MODEL_MODE=ollama` and `OLLAMA_MODEL=gemma4:12b`. An embedding model does not replace a chat model.
 
-The repository does not supply a TACC account, SDK private key or course environment installer.
-First follow the teaching team's SDK/authentication instructions using **your own** account.
-You can use the same authenticated `tcloud` SDK as the course MPI assignment. The contract review
-project includes its own GPU service and CPU client submission files for Qwen.
-On Windows verify `tcloud` from the WSL distribution used by the app:
+中文：切回 TACC 后仍可用本机小模型生成向量。下载若被代理虚拟 IP 拦截，检查 Ollama 的下载路由，不要直接关闭 Codex 依赖的全局网络。
+
+### 4. Connect TACC for course assessment
+
+Install/authenticate the official SDK following course instructions with your own account. No private authorization is bundled. Windows/WSL check:
 
 ```powershell
 wsl -- bash -lic 'tcloud ps'
 ```
 
-Then open a WSL terminal in the clone and run `bash tacc/setup-course.sh`.
-The course bootstrap and model installation are external prerequisites. Their public cluster paths in
-`tacc/` refer to the teaching environment, not local project storage; confirm them with the current course release.
-
-Edit only your private `.env`:
+From the clone in WSL, use `bash tacc/setup-course.sh` when setting up the course runtime. Bootstrap/model paths are external course prerequisites.
 
 ```dotenv
-APP_DEMO=1
 MODEL_MODE=tacc
 TACC_PROTOCOL=sdk
 TACC_MODEL=qwen3.8-27b
+TACC_URL=
+TACC_CONTEXT_LIMIT=16384
+TACC_MAX_OUTPUT_TOKENS=1800
+TACC_TIMEOUT=90
+TACC_SDK_READ_TIMEOUT=60
+TACC_SDK_TIMEOUT=720
 ```
 
-`APP_DEMO=1` keeps the synthetic local login/mail sandbox while model inference is real.
-Leave `TACC_URL` blank for automatic SDK service discovery from the job log. The separate
-`LLM_BASE_URL`, `LLM_API_KEY` and `MODEL_NAME` may remain configured for the independent API menu entry;
-they do not replace the TACC SDK route.
-The workbench can queue the service when a TACC request arrives. Use the commands below for manual
-startup and connection diagnostics.
+Leave `TACC_URL` blank for discovery. Independent `LLM_*` settings can remain for the API choice.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/tacc_service.py start --wait 480
-.\.venv\Scripts\python.exe scripts/tacc_service.py status --wait 60
-.\.venv\Scripts\python.exe scripts/check_connections.py --live
-.\.venv\Scripts\python.exe demo.py --live
-.\.venv\Scripts\python.exe scripts/launch.py
+```bash
+python scripts/tacc_service.py start --wait 480
+python scripts/tacc_service.py status --wait 60
+python scripts/check_connections.py --live
+python scripts/tacc_review_smoke.py
+python scripts/launch.py
 ```
 
-Linux and macOS use `.venv/bin/python` for the same commands. `start` submits a job to the scheduler.
-If start times out, inspect the queue and known job before submitting again. `status` may wait for startup.
-`python scripts/tacc_service.py adopt JOB_ID --wait 60` reconnects a verified existing service job.
-Use `python scripts/tacc_service.py stop` when finished. Service lifetime is capped at one hour.
-No real TACC result is guaranteed until the probe and live demo actually succeed.
+If startup waiting times out, inspect your own queue/log before submitting again. Reconnect a verified existing service:
 
-For an approved HTTP endpoint instead, set `TACC_PROTOCOL=chat`, `MODEL_MODE=tacc`,
-`TACC_URL=https://your-approved-host/v1/chat/completions`, `TACC_MODEL=your-model-id`
-and `TACC_API_KEY` if required. The SDK's cluster-only HTTP address is not a public laptop endpoint.
-Alternatively `LLM_BASE_URL` accepts the `/v1` base; `MODEL_NAME` and `LLM_API_KEY` are aliases.
-Nonblank `TACC_*` takes precedence. Never put keys in source or browser variables.
+```bash
+python scripts/tacc_service.py adopt JOB_ID --wait 60
+```
 
-### Optional frontend development
+Stop with `python scripts/tacc_service.py stop`. Service lifetime is one hour. `PD (Resources)` and `PD (Priority)` mean scheduler waiting, not necessarily a broken connection.
+
+SDK status-read, client-job and model-inference timeouts are separate. Read retries do not resubmit. Optional `TACC_EXCLUDE_NODES` should list only verified unsuitable nodes. The discovered cluster-internal HTTP address is consumed inside the course client job, not necessarily reachable directly from the laptop.
+
+中文：先核对、再 adopt；不要重复申请。前端有 TACC 选项不等于服务验收通过，需真实探测和审查结果。
+
+### 5. Configure administrator Gmail automation
+
+Recommended: **Gmail HTTPS API with Desktop OAuth**. This avoids dependence on SMTP ports without disabling TLS.
+
+1. Enable Gmail API in your Google project; create a Desktop OAuth client and configure consent/test users as required.
+2. Save the downloaded client JSON under ignored `data/`.
+3. Set the values below, substituting your own mailbox.
+4. Run the login helper and approve permission in your browser.
+5. Verify the connection, register the sender, restart services and send a new synthetic attachment.
+
+```dotenv
+MAIL_PROVIDER=gmail
+MAIL_DEMO=0
+GMAIL_TRANSPORT=oauth
+GMAIL_MAILBOX=inbox@example.com
+MAIL_AUTO_REVIEW=1
+MAIL_POLL_SECONDS=60
+```
+
+```bash
+python scripts/gmail_login.py --client data/oauth-desktop.json
+python scripts/check_mail.py
+python scripts/launch.py
+```
+
+The helper uses loopback callback, PKCE and state validation, checks the authorized profile against `GMAIL_MAILBOX` and saves authorization under `APP_DATA`. Scope `gmail.modify` supports reading/marking messages and sending results without requesting permanent deletion. Do not commit client JSON or tokens.
+
+Optional `GMAIL_HTTPS_PROXY` affects the Gmail API adapter only. Alternative `GMAIL_TRANSPORT=imap` uses a Google application password and SMTP: port 587 STARTTLS or 465 implicit TLS. The example environment defaults to local mail demo and IMAP; explicitly apply OAuth settings for this route.
+
+The optional Outlook adapter remains available through `MAIL_PROVIDER=outlook` and `GRAPH_*` fields.
+
+For private account bootstrap, use fresh data with `APP_DEMO=0`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` of at least 12 characters before first launch. Legal users register with email verification and their own passwords. Optional `LOGIN_LEGAL_EMAIL`, `LOGIN_OTHER_LEGAL_EMAIL` and `LOGIN_ADMIN_EMAIL` set email-only shortcuts.
+
+中文：主邮箱授权用于后台收件与回邮，法务注册用于确定合同归属。真实邮件、自动审查、默认模型、后台 worker 都配置好，才能完成闭环。
+
+### 6. Frontend development and deployment
+
+No Node is needed to run the packaged Web. To change it:
 
 ```bash
 npm --prefix web ci
-npm --prefix web run dev
+python scripts/export_openapi.py
+npm --prefix web run types
+npm --prefix web run build
 ```
 
-Start the backend separately with `python scripts/launch.py --no-browser`.
-Set `APP_PUBLIC_URL=http://localhost:5173` for the browser development origin and open that exact URL.
-`VITE_API_TARGET=http://127.0.0.1:8765` configures the development proxy; frontend requests use relative `/api` paths.
-Production serves frontend and API from one origin. Rebuild with `npm --prefix web run build` and commit
-the sanitized `web/dist/` after UI or VITE configuration changes. Never place secrets in `VITE_*`.
+For development, start backend with `python scripts/launch.py --no-browser` and Vite in another terminal with `npm --prefix web run dev`. Use `APP_PUBLIC_URL=http://127.0.0.1:5173` and open that exact origin. `VITE_API_TARGET=http://127.0.0.1:8765` selects the proxy target. Calls remain relative `/api` routes. Never put secrets in `VITE_*`.
+
+Optional Docker:
+
+```bash
+docker compose up --build
+```
+
+Compose runs API/worker with shared named storage and a localhost-bound port. Configure container-reachable Ollama addresses and SDK access separately; container `127.0.0.1` is not the host. These files do not provision cloud servers/object storage. See [deploy](deploy/).
 
 ## Demo Test Case
 
-**Offline standard query** (free conversation panel, demo mode):
+### Offline acceptance
+
+`python demo.py` must exit zero with:
+
+```json
+{"status":"PASS","mode":"demo","tool_called":true,"artifact_count":1}
+```
+
+It uses isolated data, exercises actual local tool execution and synthetic review, then disposes connections and cleans up. It proves plumbing, not model reasoning.
+
+In demo Web chat:
 
 ```text
 /创建Skill {"name":"Reproduction Demo","categories":[],"focus":"Check payment deadlines","policy":"evidence-only@1"}
 ```
 
-Success means the actual `save_skill` tool event appears, one Skill belongs to the logged-in user,
-and the response reports a saved Skill. Sending the command again as a new turn creates a new Skill;
-retrying the same run reuses its checkpoint. CLI `python demo.py` additionally reviews the synthetic
-contract and finishes with `{"status":"PASS","mode":"demo","tool_called":true,"artifact_count":1}`.
-This confirms tool execution and pipeline plumbing, **not natural-language model reasoning**.
+Success: an actual `save_skill` event and a Skill owned by the current account. A new turn can create a new Skill; recovery of the same run reuses its checkpoint.
 
-**Real TACC standard query**:
+### Live and feature acceptance
+
+| Test | Action | Success criterion |
+|---|---|---|
+| Connectivity | `python scripts/check_connections.py --live` | Actual active-backend response |
+| Tool planning | Use query below with a real model | Model calls `create_document`; downloadable DOCX contains requested text |
+| Standard review | Upload bundled synthetic contract | Eight categories, evidence references, explicit unresolved items, report |
+| Targeted TACC review | `python scripts/tacc_review_smoke.py` | Verified 45-day payment and three-year confidentiality evidence |
+| Skill reuse | Explicitly save payment Skill, then select it | Owned Skill and snapshotted custom checks |
+| Vectors | `python scripts/check_embeddings.py` | Real vectors and expected cross-language hit |
+| Ownership | Request another legal user's record | Denied without leaking content |
+| Email loop | Registered legal user emails one new attachment | Intake, owned review, saved report, reply to original registered sender |
+| Mail panel | Compare admin and legal accounts | Recent metadata for admin; administrator address only for legal |
+| Language | Switch language and create new output | Translated UI/presets/output; original-language quotes |
+
+Live tool query:
 
 ```text
-请调用 create_document 工具生成一个名为 Demo 的 Word 文档，正文为：Contract review demo succeeded。然后告诉我保存结果。
+Please call create_document to create a Word document titled Demo containing:
+Contract review demo succeeded.
+Then tell me whether it was saved.
 ```
 
-Success means a real model decision, a successful `create_document` event, and a downloadable DOCX
-containing that text, followed by a final answer. `python demo.py --live` must exit 0 with `mode=tacc`
-and `tool_called=true`; it is isolated and checks artifact creation. A live probe must separately report
-`tacc_test=true`. For custom review run `python scripts/tacc_review_smoke.py`: it checks the synthetic
-45-day payment term and three-year confidentiality evidence, rather than only the fixed eight categories.
-Web research can be tested with `/读取 https://www.python.org/`; success includes source URL and real page text.
+Targeted contract query:
 
-中文：只有界面能打开、或者离线 PASS，不代表模型验收通过。真实验收必须产生 TACC 模型结果与实际工具产物。
+```text
+看看有没有什么重要时间点。请列出日期、付款期限、续约或终止通知期，
+并给出对应原文和段落编号；不明确的地方请标出来。
+```
+
+Expected: answer the requested times/deadlines from that contract, not an unrelated generic checklist.
+
+### Regression, evaluation and presentation
+
+```bash
+python -m pytest -q
+python scripts/smoke_web.py
+python evals/run.py --manifest fixtures/eval-manifest.json --mode demo --output data/evaluation-results.json
+```
+
+The isolated Web smoke starts API/worker on port 8790, logs in, executes the document tool and verifies downloaded content. It does not validate external services. `python scripts/check_tacc_cleanup.py` is a Linux-only cleanup integration check.
+
+**Windows check on 2026-11-22:** the Web smoke reached its functional PASS (assets, login, worker, tool and DOCX contents), then exited nonzero because temporary `app.db` cleanup encountered `WinError 32`. This is an outstanding test-cleanup issue; that invocation is not a fully passing smoke command. The standalone offline `demo.py` completed successfully. See the Windows file-ownership FAQ below.
+
+The evaluator compares `full`, `bm25` and `retrieval` experiment paths on paired examples. These are method IDs, not frontend search modes. It records extraction/evidence metrics, unresolved results, latency and model-call information. It does not build vector hits itself, so this command is **not** a vector-versus-BM25 ablation. A frozen CUAD holdout and actual audit-policy ground truth require separate work.
+
+A 1–2 minute presentation can show login → synthetic upload → targeted result and citation → report download → an already-completed email intake/reply. Use recording if external timing is unpredictable. See [demo notes](docs/demo-script.md).
 
 ## Agent Configuration Guide
 
-| Change | Where and how |
+### Prompts, parameters and memory
+
+| Change | Location |
 |---|---|
-| General system prompt | `prompts/assistant_system.txt` |
-| Tool-use rules | `prompts/tool.txt`; parameter schemas and descriptions remain code in `app/assistant.py` |
-| Reflection after observations | `prompts/reflection.txt`; no separate critic or chain-of-thought output |
-| Contract extraction and survey | `prompts/contract_system.txt`, `prompts/survey.txt` |
-| Enable/disable tools | `.env` `AGENT_TOOLS`, comma-separated exact tool IDs without spaces; per-turn Web toggle additionally disables search/read |
-| Temperature | `.env` `LLM_TEMPERATURE=0`; SDK transports this setting too |
-| Output/context budget | `TACC_MAX_OUTPUT_TOKENS=1800`, `TACC_CONTEXT_LIMIT=16384`; never exceed the server's configured context |
-| Short-term conversation | `AGENT_SHORT_TERM_MEMORY=0` omits prior turns; otherwise recent messages, extractive history summaries and tool observations are packed to the selected model budget |
-| Browser persistent memory | `VITE_PERSIST_CHAT=0`, then rebuild frontend; uses page-lifetime memory for new messages instead of IndexedDB/localStorage |
-| Durable tasks/contracts | Always under `APP_DATA=data`; checkpoints are needed for recovery and are not disabled by browser-memory settings |
-| Model identity | HTTP: `TACC_MODEL` or `MODEL_NAME`; SDK course identity enforced in `tacc/client/remote.py` and service launcher |
+| Planner system | `prompts/assistant_system.txt` |
+| Tool instructions | `prompts/tool.txt`; schemas in `app/assistant.py` |
+| Observation/reflection | `prompts/reflection.txt` |
+| Extraction/survey | `prompts/contract_system.txt`, `prompts/survey.txt` |
+| Output language | `prompts/output_zh.txt`, `prompts/output_en.txt` |
+| Bilingual examples | `templates/zh/`, `templates/en/` |
+| Enabled tools | `AGENT_TOOLS`, comma-separated exact IDs |
+| Per-turn Web | Frontend toggle additionally disables search/read |
+| Temperature | `LLM_TEMPERATURE` |
+| API context/output/timeout | `LLM_CONTEXT_LIMIT`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_TIMEOUT` |
+| TACC context/output/timeout | `TACC_CONTEXT_LIMIT`, `TACC_MAX_OUTPUT_TOKENS`, `TACC_TIMEOUT` |
+| Ollama context/output/timeout | `OLLAMA_CONTEXT_LIMIT`, `OLLAMA_MAX_OUTPUT_TOKENS`, `OLLAMA_TIMEOUT` |
+| Short-term memory | `AGENT_SHORT_TERM_MEMORY=0` omits prior turns |
+| Browser persistence | `VITE_PERSIST_CHAT=0` and rebuild; does not erase existing history |
+| Durable records | `APP_DATA`; recovery checkpoints remain necessary |
+| Vectors | `CONTRACT_VECTOR_SEARCH`, `OLLAMA_EMBEDDING_*` |
+| Search | Optional `BRAVE_SEARCH_KEY`; otherwise Bing RSS |
+| Automatic mail | `MAIL_PROVIDER`, `MAIL_DEMO`, `MAIL_AUTO_REVIEW`, `MAIL_POLL_SECONDS` |
 
-Restart API and worker after backend configuration/prompt changes. New SDK clients copy all prompt templates
-with the review engine; no dependency on this developer's directories. The browser toggle does not erase
-previously saved browser data: clear site storage to remove it. No automatic long-term semantic memory exists.
-See [Chat context management](docs/CONTEXT_MANAGEMENT.md) for query-related history compression,
-contract pagination, observation reuse and pre-submission context budgeting.
-Embedding/vector/SerpAPI fields in `.env.example` are explicitly reserved and unused; changing them does nothing.
+Restart backend processes after environment/prompt changes. Rebuild after frontend/`VITE_*` changes. New SDK clients include prompt files, so commit them with the engine.
 
-Tool schemas are ordinary JSON, not provider-native function calling. The planner must return either
-`{"action":"final","answer":"..."}` or a validated `{"action":"tool","tool":"...","arguments":{...}}`.
-Tool execution never grants the model another user's permissions. Web/contract text cannot authorize writes.
+### Tools and protocol
+
+| Tool | Function | Boundary |
+|---|---|---|
+| `web_search` | Public information search | Enabled tool and per-turn permission |
+| `read_webpage` | Public HTTPS page | Destination/redirect checks and bounded content |
+| `list_contracts` | List owned contracts | Current account |
+| `read_contract` | Relevant paragraph reading | Ownership, pagination and coverage |
+| `review_contract` | Queue review | Owner-scoped job/configuration |
+| `list_skills` | List private Skills | Current account |
+| `save_skill` | Save reusable Skill | Explicit current-user request required |
+| `create_document` | Create Word draft | Current account; recoverable artifact |
+
+The planner uses **JSON action objects**, not native OpenAI `tool_calls`:
+
+```json
+{"action":"tool","tool":"list_skills","arguments":{},"reason":"Find available review Skills"}
+```
+
+Final response: `{"action":"final","answer":"..."}`. Pydantic rejects unknown/invalid arguments. Backend permissions apply regardless of the model's chosen action.
+
+Web and contract text are untrusted data, not authorization. The Web reader permits public HTTPS destinations with IP/redirect validation; it is not unrestricted shell or network access.
+
+### Skills and policy snapshots
+
+A Skill supports name, selected built-in categories, category checks, focus, up to six custom items and a supported policy. Examples:
+
+- [English payment Skill](templates/en/payment-skill.json) / [Chinese payment Skill](templates/zh/payment-skill.json)
+- [English request](templates/en/review-request.txt) / [Chinese request](templates/zh/review-request.txt)
+
+Saving does not automatically select a Skill for every future review. Select it for a new task; that task snapshots version and policy. Current instructions remain part of scope planning.
+
+### Operational limits
+
+| Input | Current limit/behavior |
+|---|---|
+| Upload | 12 MB |
+| Formats | Text PDF, DOCX, UTF-8 TXT |
+| PDF | Up to 300 pages; encrypted files rejected |
+| DOCX | Valid document XML; bounded expanded archive size |
+| Normalized text | Up to 700,000 characters |
+| Scanned PDF OCR / legacy `.doc` | Not implemented |
+| Evidence | Bounded source-checked quotations |
+| Editing | Editable report/draft is separate; original input preserved |
+
+中文：模型参数不突破服务真实上限，Skill 不绕过权限与上下文限制。“证据已提取”不代表已经符合全部审计要求。
 
 ## Troubleshooting FAQ
 
-1. **API fails / base URL wrong / 401 or 404.** Use `/v1/chat/completions` for `TACC_URL`, but `/v1` for
-   `LLM_BASE_URL`. Check model ID, key and endpoint protocol. Native Anthropic Messages is incompatible.
-   Do not log Authorization headers or paste `.env` into an issue.
-2. **TACC queue or insufficient GPU memory.** `PD (Priority)` and `PD (Resources)` mean pending, not model
-   failure. Check `tcloud ps` and the job's own log. Do not resubmit repeatedly. For a verified busy node,
-   `python scripts/tacc_service.py start --exclude-node NODE --wait 480` applies to a new submission;
-   an already-running saved job is reused. Only cancel your own jobs. Ask teaching staff to inspect shared
-   memory/orphan workers when needed; a local retry cannot free others' GPU memory.
-3. **SDK timeout but submission may exist.** Inspect queue and log before adopting a verified job ID.
-   Do not guess an unrelated user's job. Windows/WSL may hold a staging directory after a timeout.
-   Retain the directory until the submitting process exits; do not recursively delete active directories.
-4. **Ollama model missing or unavailable.** Start the local Ollama daemon and check `ollama list` for the
-   configured `OLLAMA_MODEL`. `ollama pull gemma4:12b` downloads the default model if needed.
-5. **Vector database missing / embedding load failed.** This version uses BM25 with no embedding import,
-   Chroma, FAISS or external knowledge-base build step. Check the uploaded text instead. Reserved vector
-   environment variables cannot enable an unimplemented backend.
-6. **Tool format error / model does not follow function-call instructions.** Read `prompts/tool.txt`,
-   confirm context/output budgets and a JSON-capable model. The transport parses a JSON action object,
-   not native OpenAI `tool_calls`. Invalid output fails explicitly; mocked tests do not prove live compliance.
-7. **Proxy / VPN / public search fails.** Check DNS, HTTPS reachability and `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`.
-   Only public HTTPS pages are allowed; private addresses, credentials in URLs and non-443 ports are rejected.
-   For cluster clients ensure the course internal host is reachable from the client job, not your browser.
-   Bing RSS has limited search quality; an optional Brave key improves provider choice but needs its own access.
-   Course aliases such as `10-0-1-10` may have no DNS records. The SDK client resolves node names before
-   entering the course runtime and converts the course's encoded private IPv4 aliases when DNS is absent.
-   `Name or service not known` is an address-resolution failure, not evidence of exhausted GPU memory.
-8. **Only ordinary chat fails in demo.** Expected: demo does not imitate a general LLM. Use the documented
-   slash-command self-test or configure a real TACC backend.
-9. **Missing frontend / Node absent.** Ensure `web/dist/index.html` and its hashed assets were committed.
-   A correctly packaged clone needs no Node. Editing the frontend requires Node and a rebuild.
-10. **403 during frontend development.** Open the exact origin configured in `APP_PUBLIC_URL`, use the Vite
-    `/api` proxy and retain session/CSRF handling. Do not disable permission checks to make the UI work.
-11. **SQLite locked on Windows after isolated demo.** Connections must be disposed before temporary data
-    cleanup. The supplied CLI handles disposal. Never delete the real application's open `data/` directory.
-12. **New checkout cannot import prompt files.** Commit `prompt_loader.py` and all `prompts/*.txt`; the SDK
-    client must copy them too. Run from the repository or use the included location-independent shell wrapper.
+| Symptom | Check / solution |
+|---|---|
+| API 401/404/base URL | Use actual API base, available model and private key; not a browser chat URL or native Anthropic endpoint. |
+| Ordinary chat fails in demo | Expected; use documented offline command or configure a real model. |
+| TACC is slow | Inspect your queue. Pending resource/priority states are scheduler conditions; avoid repeated submissions. |
+| Submission uncertain | Inspect receipt, own queue and logs; adopt the verified job rather than submitting again. |
+| GPU startup fails | Check allocated GPUs and own logs. Exclusions affect future allocations; local retries cannot free others' memory. |
+| SDK read timeout | Check WSL/authentication and read timeout separately from inference timeout. |
+| Course host cannot resolve | Inspect node resolution before runtime entry. DNS failure does not prove GPU exhaustion. |
+| Context exceeded | Confirm actual limits, use paginated reads and smaller requests; compressed history does not create unlimited context. |
+| Answer ignores targeted question | Inspect new task's instruction, scope, selected Skill and tool events; do not reuse an old generic report as the new answer. |
+| Embedding unavailable | Start Ollama, check installed model, pull configured embedding and run `check_embeddings.py`. |
+| Vector database missing | Indexes are per-contract and in memory; no persisted import required. Reserved fields do not enable another backend. |
+| Vectors absent with API/TACC | Set `CONTRACT_VECTOR_SEARCH=1` and check backend reachability to Ollama/fallback events. |
+| Tool JSON invalid | Check model JSON ability, prompts and output budget; expected format is the action envelope. |
+| Gmail receives without replying | Check worker, real-mail/auto-review settings, registered sender, default model, review state and delivery state. |
+| Message skipped | Register/verify exact sender first; send one new supported attachment. First-sync history/old skipped receipts are not automatically backfilled. |
+| SMTP disconnects before login | Check route; use HTTPS OAuth instead of disabling TLS or repeatedly changing passwords. |
+| OAuth fails/expires | Check Desktop client, consent/test users, authorized mailbox and provider policy; reauthorize locally if needed. |
+| Delivery uncertain | Inspect Sent records and persisted delivery before retry. Review success alone does not prove mail delivery. |
+| Legal user gets inbox 403 | Expected: only admin gets recent inbox metadata. |
+| Proxy/Web failure | Check DNS/HTTPS. Private IPs, URL credentials and unsupported ports are rejected; Gmail-specific proxy does not change global routing. |
+| Missing frontend | Include `web/dist`; editing requires a rebuild, packaged use does not require Node. |
+| Development origin/CSRF | Match exact `APP_PUBLIC_URL` and Vite proxy; retain session/CSRF checks. |
+| Windows SQLite/file busy | Stop relevant launcher before maintenance; dispose test connections; do not delete active data. The Web smoke can finish functional checks but still exit nonzero during temporary database cleanup; inspect the final exit status, not only its PASS line. |
+| Missing prompt after clone | Commit loader and all prompt files; no developer-machine paths. |
+| PDF has no text | Current parser needs text PDF; OCR is outside this implementation. |
 
-Run regression tests with `python -m pytest -q`. Linux-only cleanup integration test:
-`python scripts/check_tacc_cleanup.py`. Review [reproduction evidence](docs/REPRODUCTION_REPORT.md) for
-what was actually run and external checks still pending. Real mailbox, cloud deployment and model-quality
-evaluation require their own inputs and must not be inferred from offline tests.
+### Verification scope and remaining work
 
-For an isolated API/worker/packaged-frontend smoke check without Node or a browser, run
-`python scripts/smoke_web.py`. It starts services on port 8790, logs in, executes the actual
-`create_document` tool and verifies the downloaded DOCX text, then stops those services and removes temporary data.
+[REPRODUCTION_REPORT.md](docs/REPRODUCTION_REPORT.md) records historical verification evidence, not current external-service uptime. Recheck live TACC, actual email delivery and installed models in each environment. Offline tests cannot establish those integrations.
+
+Cloud/object storage, finalized real-market policies and a frozen CUAD holdout require separate configuration and acceptance. Packaging examples do not establish those deployments or evaluation results.
+
+### Maintainer upload checklist / 给维护者的操作清单
+
+1. Add only local `.env`, OAuth/SDK authorization and your own model/mail settings.
+2. Never push keys, contracts/reports, databases, chats, memories, tokens, weights, vector indexes, logs or traces.
+3. Commit code, prompts, bilingual presets, locks, safe environment example and required public frontend assets.
+4. Run `git diff --check`, offline demo, regression and relevant checks; rebuild changed frontend.
+5. Run `python scripts/package_release.py` for an allowlisted public archive; inspect staged changes before commit/push.
+6. Reproduce from a fresh clone/data directory. Accept offline and live checks separately: actual tools, evidence, report contents, ownership and registered-sender email replies.
 
 ## License
 
-Project-authored code uses the [MIT License](LICENSE), selected with the maintainer's authorization.
-Permission to publish the course cleanup update was confirmed by the maintainer. Adapted course portions
-and third-party materials retain their upstream terms; see [NOTICE](NOTICE).
-Third-party packages keep their original licenses. Refer to the [official tcloud SDK](https://github.com/turingaicloud/tcloud-sdk)
-for SDK prerequisites; no SDK account or private key is distributed here.
+Project-authored code uses the [MIT License](LICENSE). Course cleanup code was adapted from the course patch; publication permission was confirmed by the maintainer, while upstream terms continue to apply. See [NOTICE](NOTICE).
 
-中文：经维护者确认，自有代码采用 MIT；课程补丁允许公开，保留来源说明，不擅自将上游代码改授 MIT。
+Third-party libraries, course materials and optional CUAD retain their terms. No account, private key, OAuth token, customer contract or model weight is bundled. SDK prerequisites: [official tcloud SDK](https://github.com/turingaicloud/tcloud-sdk).
 
-## Gmail and bilingual workbench / Gmail 与双语工作台
-
-The language selector controls the interface, built-in request templates and the requested output language for new chats/reports. Source quotations remain unchanged. Download sample files next to the selector or edit `templates/en` and `templates/zh`.
-
-Gmail supports IMAP/SMTP with an application password (`GMAIL_TRANSPORT=imap`, no Cloud project), or optional OAuth. Keep `MAIL_DEMO=1` until `scripts/check_mail.py` passes. With `MAIL_AUTO_REVIEW=1`, registered senders get automatic standard reviews and report replies, with inbox polling every 60 seconds. Normal mailbox login passwords are not used. See [Gmail and language setup](docs/GMAIL_AND_LANGUAGES.md) for Desktop OAuth setup and verification.
-
-右下角可切换中英文，并下载对应语言的预置文件；新聊天和报告按所选语言生成，引用保留原文。Gmail 支持 OAuth HTTPS API，或 IMAP/SMTP 应用专用密码，不保存普通登录密码；详细配置及验收步骤见上方文档。
-
-### Independent model selections / 独立模型选项
-
-Use `MODEL_MODE=api` with `LLM_BASE_URL`, `LLM_API_KEY`, `MODEL_NAME` for DeepSeek or another compatible API. Keep the course route separately configured with `TACC_PROTOCOL=sdk`, `TACC_MODEL=qwen3.8-27b`. The selector shows independent API and Qwen TACC entries; local Ollama models appear when installed. Selecting API never submits a TACC job. Only explicitly selecting Qwen TACC requests the course backend.
-
-DeepSeek 使用独立的 api 模式和 LLM 配置；TACC 使用独立 SDK 配置。前端可分别选择，互不覆盖。显示 TACC 选项不代表已完成课程服务连接验收。
+中文：原创代码采用 MIT；课程补丁和第三方材料遵守各自条款。复现者自行配置模型、邮箱和课程授权。

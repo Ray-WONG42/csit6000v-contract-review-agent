@@ -8,7 +8,7 @@ from sqlalchemy import select, update, text
 from .config import settings
 from .db import session, initialize, Job, Contract, File, Event, Checkpoint, Delivery, Receipt, Ticket, User, MailCursor, AssistantRun, dump, identifier
 from .security import digest
-from .services import ACTIVE_REVIEW_STATES, write_file, ingest, create_job, graph_client, deliver_pending, remove_deleted_files
+from .services import ACTIVE_REVIEW_STATES, write_file, ingest, create_job, graph_client, deliver_pending, remove_deleted_files, resolve_model_selection
 from .schemas import JobInput
 from .retrieval import vector_matches
 from .tacc_sdk import SERVICE_RECHECK_SECONDS, TaccServicePending, TaccClientPending, queued_service_base
@@ -217,13 +217,20 @@ def receive_message(client, message):
         ticket = db.get(Ticket, digest(token_match[1])) if token_match else None
         ticket_valid = bool(ticket and ticket.owner_id == user.id and ticket.expires > time.time() and not ticket.used)
         authorized = settings.mail_auto_review or ticket_valid
+        # Live mailbox reviews always use the course backend, independently of
+        # the Web selection or independent API default. Offline demos stay local.
+        mail_model = "" if settings.model_mode == "demo" else "tacc"
+        if mail_model and settings.tacc_protocol != "sdk" and not (settings.tacc_url and settings.tacc_model):
+            raise RuntimeError("邮件审查需要配置独立的 TACC 连接")
+        model_snapshot = resolve_model_selection(mail_model, "")
         _, name, raw = attachments[0]
         contract = ingest(db, user, name, raw, "邮件导入")
         request = "标准合同审查" if settings.mail_auto_review else str(message.get("body", {}).get("content", ""))[:4000]
         language_match = re.search(r"\[LANG=(en|zh)\]", subject, re.I)
         language = language_match[1].lower() if language_match else user.language
-        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id, language=language),
-                         "email", "queued" if authorized else "awaiting_confirmation")
+        job = create_job(db, user, contract.id, JobInput(instruction=request, request_key=receipt_id,
+                         language=language, model_mode=mail_model),
+                         "email", "queued" if authorized else "awaiting_confirmation", model_snapshot=model_snapshot)
         snapshot = json.loads(job.skill)
         snapshot["mail_message_id"] = str(message.get("internetMessageId", ""))[:500]
         job.skill = dump(snapshot)

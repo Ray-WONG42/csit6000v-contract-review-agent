@@ -2,7 +2,7 @@
 
 Evidence-grounded contract review, general tool-assisted conversation and automatic email intake in a three-panel Web workspace.
 
-**English main guide · 中文对照说明 · Updated: 2026-11-22**
+**Updated: 2026-11-22**
 
 The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible API and local Ollama are supported for development. Offline demo mode verifies the engineering workflow without claiming live model reasoning.
 
@@ -22,19 +22,19 @@ The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible
 
 ### Capabilities
 
-| Capability | Implemented behavior | 中文说明 |
-|---|---|---|
-| Contract intake | Web upload or administrator-mailbox attachment | 网页与邮件双入口 |
-| Standard review | Eight clause categories, verified quotations and downloadable DOCX | 默认八类条款审查与风险报告 |
-| Targeted review | Current question, custom Skill focus and custom checks | 支持时间点、付款等专项问题 |
-| General conversation | Answer questions; search public information; read pages/contracts; save Skills; create documents | 不限于合同审查，按需调用工具 |
-| Evidence | Stable paragraph IDs, original locations and quotation validation | 引用必须与原文对应 |
-| Retrieval | BM25 plus optional vector search; section-aware chunks and bounded expansion | 关键词与向量候选可合并使用 |
-| Three-panel Web | History/company grouping, current chat/tool events, source/risk table/report panel | 左侧历史、中间对话、右侧阅读编辑 |
-| Bilingual UI | Chinese/English interface, output instructions and preset files | 中英文切换；原文引用不翻译 |
-| Private Skills | Account-owned reusable checks with version snapshots | 私有 Skill 可复用，任务保留版本 |
-| Automatic email | Review registered legal users' contracts and reply with saved results | **管理员邮箱自动收合同、审查并回邮** |
-| Execution harness | Durable jobs, checkpoints, ownership, submission and delivery records | 权限隔离、恢复、去重及状态追踪 |
+| Capability | Implemented behavior |
+|---|---|
+| Contract intake | Web upload or administrator-mailbox attachment |
+| Standard review | Eight clause categories, verified quotations and downloadable DOCX |
+| Targeted review | Current question, custom Skill focus and custom checks |
+| General conversation | Answer questions; search public information; read pages/contracts; save Skills; create documents |
+| Evidence | Stable paragraph IDs, original locations and quotation validation |
+| Retrieval | BM25 plus optional vector search; section-aware chunks and bounded expansion |
+| Three-panel Web | History/company grouping, current chat/tool events, source/risk table/report panel |
+| Bilingual UI | Chinese/English interface, output instructions and preset files |
+| Private Skills | Account-owned reusable checks with version snapshots |
+| Automatic email | Review registered legal users' contracts and reply with saved results |
+| Execution harness | Durable jobs, checkpoints, ownership, submission and delivery records |
 
 ### Agent workflow
 
@@ -56,8 +56,6 @@ flowchart TD
     C --> O
 ```
 
-中文：先理解当前需求，再调用工具，读取结果后决定继续检索、补查或回答。界面展示处理阶段和工具记录，不展示模型私有思维。
-
 ### Contract processing
 
 ```mermaid
@@ -65,14 +63,7 @@ flowchart TD
     I["Web upload or accepted email"] --> F["Validate file and parse text"]
     F --> ID["Normalize text; stable paragraph IDs and locations"]
     ID --> S["Scope: standard categories, question or Skill"]
-    S --> K["BM25 keyword candidates"]
-    S --> E{"Vector search enabled and available?"}
-    E -->|Yes| V["Ollama embeddings and per-contract FAISS"]
-    E -->|No| M["Merge and bound available candidates"]
-    V --> M
-    K --> M
-    ID --> H["Section-aware chunks; optional survey hints"]
-    H --> M
+    S --> M["Retrieve and bound relevant source paragraphs"]
     M --> L["Model extraction with bounded context"]
     L --> Q["Verify source IDs and exact normalized quotes"]
     Q -->|Unresolved and retry remains| X["Expand neighboring paragraphs"]
@@ -85,20 +76,18 @@ flowchart TD
 
 The optimized API/TACC path normally merges retrieval candidates and batches built-in checks in groups of up to three. It does **not** require an extra whole-contract model survey before every review. Other paths can survey section-aware chunks. Oversized extraction requests are split into smaller candidate groups; each group's evidence is verified separately before merging.
 
-中文：不是每次都把全文塞进上下文，也不是固定先让 Qwen 通读全文。正常路径先检索再提取，必要时补查相邻段落或拆分请求。
-
 ### Default categories and targeted questions
 
-| ID | Category | 中文 |
-|---|---|---|
-| `termination` | Termination | 合同终止 |
-| `liability_cap` | Liability cap | 责任上限 |
-| `governing_law` | Governing law | 适用法律 |
-| `automatic_renewal` | Automatic renewal | 自动续约 |
-| `audit_rights` | Audit rights | 审计权 |
-| `assignment` | Assignment | 转让 |
-| `insurance` | Insurance | 保险 |
-| `agreement_date` | Agreement date | 协议日期 |
+| ID | Category |
+|---|---|
+| `termination` | Termination |
+| `liability_cap` | Liability cap |
+| `governing_law` | Governing law |
+| `automatic_renewal` | Automatic renewal |
+| `audit_rights` | Audit rights |
+| `assignment` | Assignment |
+| `insurance` | Insurance |
+| `agreement_date` | Agreement date |
 
 These are defaults, not the required answer format for every question. A selected Skill can specify categories, focus, custom items and a policy. Current instructions can add a targeted question. Unsupported scope, such as tracked changes to the original contract or multi-contract comparison, returns a clarification instead of pretending the operation succeeded.
 
@@ -120,8 +109,6 @@ These are defaults, not the required answer format for every question. A selecte
 - Oversized report attachments use a login/download notice.
 - Initial synchronization establishes a baseline rather than processing all historical mail. Register first, then send a new message.
 - API and worker must remain running; a browser tab alone does not poll the mailbox.
-
-中文：法务注册并验证邮箱后，将合同发到管理员邮箱，后台自动抓取、默认审查、保存风险报告并回邮。管理员可看最近一天收件的元数据和处理状态；普通法务只看到管理员收件地址，不开放主邮箱的收件列表。
 
 ## Architecture
 
@@ -146,36 +133,9 @@ This is **one bounded tool-calling agent plus a review pipeline and durable harn
 
 API and worker are separate processes using a SQLite-backed queue. Redis/Celery are not required. FastAPI serves the committed frontend and relative `/api` routes from one origin.
 
-### Retrieval implementation
+### Retrieval
 
-The code has **two candidate retrieval channels**, which can be combined. Section-aware chunking and neighboring-paragraph expansion support the review workflow; they are not separate frontend search modes.
-
-| Aspect | BM25 keyword retrieval | Vector retrieval |
-|---|---|---|
-| Code | `engine.Retrieval` | `app/retrieval.py: vector_matches` |
-| Representation | Term/document frequency and paragraph length | Dense Ollama embeddings |
-| Strength | Explicit clause terms and lexical overlap | Semantic and cross-language similarity |
-| Tokenization | Latin alphanumeric tokens; no Chinese segmentation | Multilingual embedding model |
-| Index | In-memory paragraph statistics | Per-contract in-memory FAISS `IndexFlatIP` |
-| Ranking | BM25 formula | Normalized inner product, equivalent to cosine ranking |
-| Citation identity | Original paragraph IDs | Fragment hits mapped back to paragraph IDs |
-| Extra service | None | Local Ollama plus downloaded embedding model |
-
-Vector input uses up-to-700-character fragments with a 600-character stride, embedded in batches of 16. Up to 16 fragment hits are deduplicated to up to four paragraph IDs per query. Candidate merging alternates lexical/vector rankings, removes duplicates and bounds the result. Provenance can include `keyword`, `vector`, `survey`, `fallback` and `adjacent`.
-
-| Configuration | Behavior |
-|---|---|
-| `CONTRACT_VECTOR_SEARCH=0` | Non-vector candidates, survey hints where applicable and adjacent expansion |
-| `CONTRACT_VECTOR_SEARCH=1` | Enable vector candidates alongside BM25 with API, TACC or Ollama |
-| Not set | Defaults enabled in Ollama mode; explicitly enable for API/TACC |
-| Embedding unavailable | Record fallback and continue with other candidates |
-| Offline demo | No real embedding-model dependency |
-
-Default embedding model: **`embeddinggemma:300m-qat-q4_0`**, approximately 239 MB; the supplied check verifies 768-dimensional vectors. It is independent of the chat model, so local embeddings can support API or TACC reviews.
-
-There is no persistent cross-contract knowledge base or vector-only frontend selector. Generic `EMBEDDING_*`, `VECTOR_STORE_PATH` and `VECTOR_PERSIST` fields are reserved; the actual adapter uses `OLLAMA_EMBEDDING_*` and an in-memory index.
-
-中文：按实际实现描述 BM25 和可选向量候选的合并。语义分块组织文本，补查扩展上下文；不要把它们硬命名成两种独立检索模式。中文问题查英文合同，建议启用向量通道。
+The review pipeline combines BM25 keyword ranking with optional Ollama/FAISS vector search. Section-aware chunks and neighboring-paragraph expansion preserve useful context; candidate merging keeps model input bounded and source paragraph IDs traceable. If embeddings are unavailable, the job records a fallback and continues with other candidates. See the optional setup below to enable vectors.
 
 ### Evidence, policy and output states
 
@@ -353,7 +313,7 @@ The URL is a placeholder, not a working service. Use an API base, not a browser 
 
 The selector keeps API and Qwen TACC separate. Choosing API does not submit TACC jobs. The backend default model also controls unattended email review.
 
-### 3. Enable local vector retrieval
+### 3. Optional local embeddings
 
 Install/start Ollama, then:
 
@@ -372,11 +332,9 @@ OLLAMA_EMBEDDING_TIMEOUT=120
 CONTRACT_VECTOR_SEARCH=1
 ```
 
-Restart the application. The check verifies real vectors and Chinese-to-English retrieval without submitting TACC work. No persistent database import/build is needed.
+Restart the application. The embedding model is separate from the chat model. The check verifies local vectors without submitting TACC work. Set `CONTRACT_VECTOR_SEARCH=0` to disable vectors; no persistent index build is needed.
 
 For local chat too, run `ollama pull gemma4:12b`, set `MODEL_MODE=ollama` and `OLLAMA_MODEL=gemma4:12b`. An embedding model does not replace a chat model.
-
-中文：切回 TACC 后仍可用本机小模型生成向量。下载若被代理虚拟 IP 拦截，检查 Ollama 的下载路由，不要直接关闭 Codex 依赖的全局网络。
 
 ### 4. Connect TACC for course assessment
 
@@ -420,8 +378,6 @@ Stop with `python scripts/tacc_service.py stop`. Service lifetime is one hour. `
 
 SDK status-read, client-job and model-inference timeouts are separate. Read retries do not resubmit. Optional `TACC_EXCLUDE_NODES` should list only verified unsuitable nodes. The discovered cluster-internal HTTP address is consumed inside the course client job, not necessarily reachable directly from the laptop.
 
-中文：先核对、再 adopt；不要重复申请。前端有 TACC 选项不等于服务验收通过，需真实探测和审查结果。
-
 ### 5. Configure administrator Gmail automation
 
 Recommended: **Gmail HTTPS API with Desktop OAuth**. This avoids dependence on SMTP ports without disabling TLS.
@@ -454,8 +410,6 @@ Optional `GMAIL_HTTPS_PROXY` affects the Gmail API adapter only. Alternative `GM
 The optional Outlook adapter remains available through `MAIL_PROVIDER=outlook` and `GRAPH_*` fields.
 
 For private account bootstrap, use fresh data with `APP_DEMO=0`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` of at least 12 characters before first launch. Legal users register with email verification and their own passwords. Optional `LOGIN_LEGAL_EMAIL`, `LOGIN_OTHER_LEGAL_EMAIL` and `LOGIN_ADMIN_EMAIL` set email-only shortcuts.
-
-中文：主邮箱授权用于后台收件与回邮，法务注册用于确定合同归属。真实邮件、自动审查、默认模型、后台 worker 都配置好，才能完成闭环。
 
 ### 6. Frontend development and deployment
 
@@ -493,7 +447,7 @@ It uses isolated data, exercises actual local tool execution and synthetic revie
 In demo Web chat:
 
 ```text
-/创建Skill {"name":"Reproduction Demo","categories":[],"focus":"Check payment deadlines","policy":"evidence-only@1"}
+/create-skill {"name":"Reproduction Demo","categories":[],"focus":"Check payment deadlines","policy":"evidence-only@1"}
 ```
 
 Success: an actual `save_skill` event and a Skill owned by the current account. A new turn can create a new Skill; recovery of the same run reuses its checkpoint.
@@ -524,8 +478,9 @@ Then tell me whether it was saved.
 Targeted contract query:
 
 ```text
-看看有没有什么重要时间点。请列出日期、付款期限、续约或终止通知期，
-并给出对应原文和段落编号；不明确的地方请标出来。
+Identify important dates and deadlines, including payment periods and renewal or
+termination notices. Quote the source and paragraph ID for each item, and flag
+anything that cannot be confirmed.
 ```
 
 Expected: answer the requested times/deadlines from that contract, not an unrelated generic checklist.
@@ -618,8 +573,6 @@ Saving does not automatically select a Skill for every future review. Select it 
 | Evidence | Bounded source-checked quotations |
 | Editing | Editable report/draft is separate; original input preserved |
 
-中文：模型参数不突破服务真实上限，Skill 不绕过权限与上下文限制。“证据已提取”不代表已经符合全部审计要求。
-
 ## Troubleshooting FAQ
 
 | Symptom | Check / solution |
@@ -656,7 +609,7 @@ Saving does not automatically select a Skill for every future review. Select it 
 
 Cloud/object storage, finalized real-market policies and a frozen CUAD holdout require separate configuration and acceptance. Packaging examples do not establish those deployments or evaluation results.
 
-### Maintainer upload checklist / 给维护者的操作清单
+### Maintainer upload checklist
 
 1. Add only local `.env`, OAuth/SDK authorization and your own model/mail settings.
 2. Never push keys, contracts/reports, databases, chats, memories, tokens, weights, vector indexes, logs or traces.
@@ -670,5 +623,3 @@ Cloud/object storage, finalized real-market policies and a frozen CUAD holdout r
 Project-authored code uses the [MIT License](LICENSE). Course cleanup code was adapted from the course patch; publication permission was confirmed by the maintainer, while upstream terms continue to apply. See [NOTICE](NOTICE).
 
 Third-party libraries, course materials and optional CUAD retain their terms. No account, private key, OAuth token, customer contract or model weight is bundled. SDK prerequisites: [official tcloud SDK](https://github.com/turingaicloud/tcloud-sdk).
-
-中文：原创代码采用 MIT；课程补丁和第三方材料遵守各自条款。复现者自行配置模型、邮箱和课程授权。

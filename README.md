@@ -312,7 +312,7 @@ Web research can be tested with `/读取 https://www.python.org/`; success inclu
 | Enable/disable tools | `.env` `AGENT_TOOLS`, comma-separated exact tool IDs without spaces; per-turn Web toggle additionally disables search/read |
 | Temperature | `.env` `LLM_TEMPERATURE=0`; SDK transports this setting too |
 | Output/context budget | `TACC_MAX_OUTPUT_TOKENS=1800`, `TACC_CONTEXT_LIMIT=16384`; never exceed the server's configured context |
-| Short-term conversation | `AGENT_SHORT_TERM_MEMORY=0` omits prior turns from planner input; default keeps last four messages, each bounded |
+| Short-term conversation | `AGENT_SHORT_TERM_MEMORY=0` omits prior turns; otherwise recent messages, extractive history summaries and tool observations are packed to the selected model budget |
 | Browser persistent memory | `VITE_PERSIST_CHAT=0`, then rebuild frontend; uses page-lifetime memory for new messages instead of IndexedDB/localStorage |
 | Durable tasks/contracts | Always under `APP_DATA=data`; checkpoints are needed for recovery and are not disabled by browser-memory settings |
 | Model identity | HTTP: `TACC_MODEL` or `MODEL_NAME`; SDK course identity enforced in `tacc/client/remote.py` and service launcher |
@@ -320,6 +320,8 @@ Web research can be tested with `/读取 https://www.python.org/`; success inclu
 Restart API and worker after backend configuration/prompt changes. New SDK clients copy all prompt templates
 with the review engine; no dependency on this developer's directories. The browser toggle does not erase
 previously saved browser data: clear site storage to remove it. No automatic long-term semantic memory exists.
+See [Chat context management](docs/CONTEXT_MANAGEMENT.md) for query-related history compression,
+contract pagination, observation reuse and pre-submission context budgeting.
 Embedding/vector/SerpAPI fields in `.env.example` are explicitly reserved and unused; changing them does nothing.
 
 Tool schemas are ordinary JSON, not provider-native function calling. The planner must return either

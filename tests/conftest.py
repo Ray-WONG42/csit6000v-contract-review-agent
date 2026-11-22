@@ -12,6 +12,7 @@ os.environ["TACC_EXCLUDE_NODES"] = ""
 os.environ["MAIL_AUTO_REVIEW"] = "false"
 os.environ["MAIL_DEMO"] = "true"
 os.environ["GMAIL_HTTPS_PROXY"] = ""
+os.environ["CONTRACT_VECTOR_SEARCH"] = "false"
 
 from app.main import app, rate_limits
 from app.db import Base, engine, initialize

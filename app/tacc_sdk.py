@@ -281,6 +281,8 @@ def wait_for_result(run, remote_id, event):
         if f"CLAUSE_RESULT_READY {run}" in log:
             envelope = json.loads(sdk(["cat", f"clause-results/{run}.json"], timeout=60))
             if "error" in envelope:
+                if envelope['error'] == 'ContextBudgetExceeded':
+                    raise ValueError('聊天或审查请求超出 TACC 上下文预算，请缩小请求范围；这不是网络断线。')
                 raise RuntimeError("TACC 模型执行失败 (" + envelope["error"] + ")")
             return envelope
         if "Traceback (most recent call last)" in log or "Exited with exit code" in log or "CANCELLED" in log:

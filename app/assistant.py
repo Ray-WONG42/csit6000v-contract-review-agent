@@ -13,7 +13,7 @@ from .security import own
 from .schemas import SkillInput, JobInput
 from .services import create_job, write_file
 from .web_tools import web_search, read_webpage
-from engine import Model, parse, docx_report, RULES
+from engine import Model, parse, docx_report, RULES, Retrieval
 from prompt_loader import load_prompt
 
 
@@ -35,6 +35,12 @@ class EmptyArgs(StrictArgs):
 
 class ContractArgs(StrictArgs):
     contract_id: str = Field(min_length=1, max_length=64)
+
+
+class ReadContractArgs(ContractArgs):
+    start: int = Field(default=0, ge=0)
+    limit: int = Field(default=8, ge=1, le=24)
+    query: str = Field(default="", max_length=400)
 
 
 class ReviewArgs(ContractArgs):
@@ -76,7 +82,7 @@ class DocumentArgs(StrictArgs):
 
 TOOL_ARGS = {
     "web_search": SearchArgs, "read_webpage": PageArgs,
-    "list_contracts": EmptyArgs, "read_contract": ContractArgs,
+    "list_contracts": EmptyArgs, "read_contract": ReadContractArgs,
     "review_contract": ReviewArgs, "list_skills": EmptyArgs,
     "save_skill": SaveSkillArgs, "create_document": DocumentArgs,
 }
@@ -84,7 +90,7 @@ DESCRIPTIONS = {
     "web_search": "搜索公开互联网，返回来源链接与摘要。外部搜索查询只包含公开关键词，避免上传私人合同内容。",
     "read_webpage": "读取公开 HTTPS 网页正文，包括用户给出的链接。",
     "list_contracts": "列出当前账号拥有的合同及其 ID。",
-    "read_contract": "读取当前用户已上传合同的正文段落，精确引用段落 ID。",
+    "read_contract": "分页读取合同原文及章节索引。使用返回的 next_start 继续读取；不要重复读取相同 start。精确引用段落 ID。",
     "review_contract": "为当前账号的合同创建后台审查任务，可指定 Skill。返回任务 ID 和状态。",
     "list_skills": "列出当前账号可复用的 Skill。",
     "save_skill": "新建并保存 Skill，仅在当前用户明确要求创建/保存模板时使用。",
@@ -99,6 +105,91 @@ def model_decision(system, payload, model, checkpoint):
         from .tacc_sdk import run_remote
         return run_remote("decision", model.event, checkpoint, auto_start=True, system=system, payload=payload)
     return model.call(system, payload, "assistant")
+
+
+def compact_schema(value):
+    if isinstance(value, dict):
+        return {k: ({name: compact_schema(schema) for name, schema in v.items()}
+                    if k in ('properties', '$defs', 'definitions') else compact_schema(v))
+                for k, v in value.items() if k not in ('title', 'default')}
+    if isinstance(value, list):
+        return [compact_schema(v) for v in value]
+    return value
+
+
+def tool_signature(name, arguments):
+    if name == 'read_contract':
+        arguments = ReadContractArgs.model_validate(arguments).model_dump()
+    return name + json.dumps(arguments, sort_keys=True)
+
+
+def relevant_history_excerpt(content, message):
+    words = set(re.findall(r'[a-z0-9_]+|[\u4e00-\u9fff]', message.lower()))
+    sentences = [s for s in re.split(r'(?<=[。！？.!?\n])\s*', content) if s.strip()]
+    if not sentences:
+        return content[:160]
+    ranked = sorted(range(len(sentences)), key=lambda i: sum(w in sentences[i].lower() for w in words), reverse=True)
+    chosen = sorted(set([0, *ranked[:2]]))
+    return ' '.join(sentences[i] for i in chosen)[:400]
+
+
+def fit_chat_payload(system, payload, mode):
+    """Budget the complete chat request before submitting a remote job."""
+    import copy
+    payload = copy.deepcopy(payload)
+    limit, output = ((settings.llm_context_limit, settings.llm_max_output_tokens) if mode == 'api' else
+                     (settings.ollama_context_limit, settings.ollama_max_output_tokens) if mode == 'ollama' else
+                     (settings.tacc_context_limit, settings.tacc_max_output_tokens))
+    def fits():
+        body = {'messages': [{'role': 'system', 'content': system},
+                             {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}]}
+        return len(json.dumps(body, ensure_ascii=False).encode()) + output + 768 <= limit
+    history = payload.get('history', [])
+    payload['history'] = history[-2:]
+    if len(history) > 2:
+        payload['conversation_summary'] = [
+            {'role': item['role'], 'excerpt': relevant_history_excerpt(item['content'], payload['message']),
+             'referenced_ids': re.findall(r'\b[a-f0-9]{32}\b', item['content']),
+             'compressed': True} for item in history[:-2]][-6:]
+    while not fits() and payload.get('conversation_summary'):
+        item = payload['conversation_summary'].pop(0)
+        memory = payload.setdefault('earlier_context', {'turns_compressed': 0, 'referenced_ids': []})
+        memory['turns_compressed'] += 1
+        memory['referenced_ids'] = list(dict.fromkeys(memory['referenced_ids'] + item['referenced_ids']))[-8:]
+    while not fits() and payload.get('history'):
+        payload['history'].pop(0)
+        payload['earlier_history_omitted'] = True
+    # Observation excerpts are navigation aids. Full, replay-safe results stay in checkpoints.
+    while not fits():
+        excerpts = [o for o in payload.get('observations', []) if len(o.get('result_excerpt', '')) > 160]
+        if excerpts:
+            longest = max(excerpts, key=lambda o: len(o['result_excerpt'].encode()))
+            longest['result_excerpt'] = longest['result_excerpt'][:max(160, len(longest['result_excerpt']) // 2)]
+            longest['excerpt_truncated'] = True
+        elif len(payload.get('observations', [])) > 1:
+            payload['observations'].pop(0)
+            payload['earlier_observations_omitted'] = True
+        else:
+            raise ValueError('聊天请求超出模型上下文预算；请缩短当前问题或新建对话。尚未提交 TACC 作业。')
+    return payload
+
+
+def observation_context(observations):
+    # Keep cursor/coverage metadata outside the text excerpt so it is never clipped away.
+    unique = {}
+    for item in observations:
+        signature = tool_signature(item['tool'], item.get('arguments', {}))
+        result = item['result']
+        entry = {'tool': item['tool'], 'arguments': item.get('arguments', {}),
+                 'result_excerpt': json.dumps(result, ensure_ascii=False)[:2000],
+                 'excerpt_truncated': len(json.dumps(result, ensure_ascii=False)) > 2000}
+        if isinstance(result, dict):
+            entry['coverage'] = {key: result[key] for key in ('contract_id', 'start', 'next_start',
+                                'total_paragraphs', 'truncated', 'selection_query', 'error') if key in result}
+            if item['tool'] == 'read_contract' and 'next_start' not in entry['coverage']:
+                entry['coverage'].update(start=0, next_start=len(result.get('paragraphs', [])) if result.get('truncated') else None)
+        unique[signature] = entry
+    return list(unique.values())[-3:]
 
 
 def has_skill_permission(message):
@@ -132,14 +223,34 @@ def run_tool(name, arguments, user, run_id, step, request):
                 paragraphs = parse(file.name, (settings.data / file.path).read_bytes())
                 contract.paragraphs = dump(paragraphs)
             # Explicit clipping metadata prevents claims of having read omitted text.
+            query = args.query or (request.get('message', '')[:400] if args.start == 0 else '')
+            ranking = list(range(len(paragraphs)))
+            if query:
+                lexical = Retrieval(paragraphs).search('custom_question', 8, ('本次问题', [query], []))
+                semantic = []
+                if settings.contract_vector_search:
+                    try:
+                        from .retrieval import vector_matches
+                        hits = vector_matches(paragraphs, {'categories': []}, query, Model(lambda *_: None, 'api'))
+                        lookup = {p['id']: i for i, p in enumerate(paragraphs)}
+                        semantic = [lookup[pid] for pid in hits.get('custom_question', []) if pid in lookup]
+                    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+                        pass
+                ranking = list(dict.fromkeys(semantic + lexical + ranking))
             output, length = [], 0
-            for paragraph in paragraphs:
-                if length + len(paragraph["text"]) > 16000:
+            for index in ranking[args.start:args.start + args.limit]:
+                paragraph = paragraphs[index]
+                size = len(json.dumps(paragraph, ensure_ascii=False).encode())
+                if output and length + size > 6000:
                     break
                 output.append(paragraph)
-                length += len(paragraph["text"])
-            return {"contract_id": contract.id, "paragraphs": output, "total_paragraphs": len(paragraphs),
-                    "truncated": len(output) < len(paragraphs)}
+                length += size
+            next_start = args.start + len(output)
+            outline = [{'paragraph_id': p['id'], 'heading_excerpt': p['text'][:85]}
+                       for p in paragraphs if re.match(r'\s*(?:Section|Article)\s+\d+(?:\.(?!\d))?\s+', p['text'], re.I)][:24]
+            return {"contract_id": contract.id, "outline": outline, "paragraphs": output, "total_paragraphs": len(paragraphs),
+                    "start": args.start, "next_start": next_start if next_start < len(paragraphs) else None,
+                    "truncated": args.start > 0 or next_start < len(paragraphs), "selection_query": query}
         if name == "review_contract":
             db.execute(text("BEGIN IMMEDIATE"))
             job = create_job(db, user, args.contract_id, JobInput(instruction=args.instruction,
@@ -206,7 +317,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
             raise ValueError("只有普通法务账号可以使用助手")
         if request.get("contract_id"):
             own(db.get(Contract, request["contract_id"]), user)
-    available = {key: {"description": DESCRIPTIONS[key], "arguments_schema": model.model_json_schema()}
+    available = {key: {"description": DESCRIPTIONS[key], "arguments_schema": compact_schema(model.model_json_schema())}
                  for key, model in TOOL_ARGS.items() if key in settings.agent_tools.split(",") and (request.get("allow_web", True) or key not in ("web_search", "read_webpage"))}
     system = "\n\n".join(load_prompt(name) for name in ("assistant_system", "tool", "reflection"))
     system += "\n" + load_prompt("output_en" if request.get("language") == "en" else "output_zh")
@@ -249,9 +360,8 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
             else:
                 if model.mode != "tacc" or settings.tacc_protocol != "sdk":
                     event("model", "理解请求并选择工具", "")
-                context = [{"tool": item["tool"], "result_excerpt": json.dumps(item["result"], ensure_ascii=False)[:2000]}
-                           for item in observations[-3:]]
-                history = [{"role": item["role"], "content": item["content"][-400:]} for item in (request.get("history", []) if settings.agent_short_term_memory else [])[-4:]]
+                context = observation_context(observations)
+                history = [{"role": item["role"], "content": item["content"]} for item in (request.get("history", []) if settings.agent_short_term_memory else [])[-8:]]
                 payload = {"message": request["message"], "history": history,
                            "contract_id": request.get("contract_id", ""), "tools": available,
                            "observations": context, "remaining_tool_calls": 6 - step,
@@ -259,6 +369,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
                 if step == 6:
                     payload["tools"] = {}
                     payload["instruction"] = load_prompt("budget")
+                payload = fit_chat_payload(system, payload, model.mode)
                 def scoped_checkpoint(key, value=None):
                     return checkpoint(f"model:{step}:" + key, value)
                 decision = decide(system, payload) if decide else model_decision(system, payload, model, scoped_checkpoint)
@@ -278,7 +389,14 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
         try:
             if name not in available:
                 raise ValueError("本次对话未启用此工具")
-            result = run_tool(name, arguments, user, run_id, step, request)
+            previous = next((item for item in reversed(observations)
+                             if name == 'read_contract' and item['tool'] == name
+                             and tool_signature(name, item.get('arguments', {})) == tool_signature(name, arguments)), None)
+            if previous:
+                result = {**previous['result'], 'reused': True,
+                          'instruction': 'This page was already read. Use next_start with the same selection_query to continue, or answer from the evidence. Do not repeat this request.'}
+            else:
+                result = run_tool(name, arguments, user, run_id, step, request)
             event("observation", str(name) + " 已返回", json.dumps(result, ensure_ascii=False)[:700])
         except HTTPException:
             result = {"error": "记录不存在或当前账号无权访问"}

@@ -54,9 +54,16 @@ export default function AssistantChat({
 
   useEffect(() => {
     let cancelled = false;
-    loadLocal(userId, storageKey).then(saved => {
+    loadLocal(userId, storageKey).then(async saved => {
+      const restored = saved.messages as Message[];
+      // Reconcile failed local messages with tasks recovered on the server.
+      await Promise.allSettled(restored.filter(message => message.run && (message.pending || message.error)).slice(-5).map(async message => {
+        const data = await api<{state: string; events: Trace[]; result: Result; error: string}>("/assistant/runs/" + message.run);
+        const finished = data.state === "completed" || data.state === "failed";
+        Object.assign(message, {events: data.events, pending: !finished, output: data.result, error: data.error,
+          text: finished ? data.result.answer || data.error || t("处理完成") : ""});
+      }));
       if (!cancelled) {
-        const restored = saved.messages as Message[];
         latest.current = restored;
         setMessages(restored); setDraft(saved.draft); setLoaded(true);
         if (restored.some(message => message.pending && message.run)) setOverview(false);

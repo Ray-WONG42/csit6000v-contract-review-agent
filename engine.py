@@ -254,7 +254,7 @@ class Model:
         body = {
             "model": self.ollama_model,
             "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}],
             "stream": False,
             "format": "json",
             "think": False,
@@ -323,7 +323,7 @@ class Model:
                 raise RuntimeError("请配置 TACC_URL 和 TACC_MODEL。")
             body = {"model": model_name, "temperature": getattr(settings, 'llm_temperature', 0), "max_tokens": max_output,
                     "messages": [{"role": "system", "content": system},
-                                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]}
+                                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}]}
             # Conservative UTF-8 byte bound; never silently truncate the contract.
             if len(json.dumps(body, ensure_ascii=False).encode()) + max_output > context_limit:
                 raise ContextBudgetExceeded("请求超出配置的保守上下文预算，请调小分块或确认课程上下文上限。")

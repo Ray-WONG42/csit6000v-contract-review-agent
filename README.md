@@ -63,7 +63,10 @@ flowchart TD
     I["Web upload or accepted email"] --> F["Validate file and parse text"]
     F --> ID["Normalize text; stable paragraph IDs and locations"]
     ID --> S["Scope: standard categories, question or Skill"]
-    S --> M["Retrieve and bound relevant source paragraphs"]
+    S --> K["BM25 keyword search"]
+    S --> V["FAISS vector search with Ollama embeddings"]
+    K --> M["Merge and bound candidate paragraphs"]
+    V --> M
     M --> L["Model extraction with bounded context"]
     L --> Q["Verify source IDs and exact normalized quotes"]
     Q -->|Unresolved and retry remains| X["Expand neighboring paragraphs"]

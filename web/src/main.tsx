@@ -1,4 +1,4 @@
-import { t, useLanguage, LanguageSwitch, getLanguage, setLanguage, type Language } from "./i18n";
+import { t, useLanguage, LanguageSwitch, getLanguage, setLanguage, clauseCount, type Language } from "./i18n";
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -1120,7 +1120,7 @@ function App() {
                   <>
                     <div className="document-title">
                       <h2 lang="en">Review findings</h2>
-                      <p>{t("合同风险与证据")}{t(rows.length > 0 && ` · ${rows.length} 项条款`)}</p>
+                      <p>{t("合同风险与证据")}{rows.length > 0 && ` · ${clauseCount(rows.length)}`}</p>
                     </div>
                     {t(!rows.length ? (
                       <div className="empty-state">

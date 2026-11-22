@@ -7,6 +7,9 @@ try { language = localStorage.getItem('clause-language') === 'zh' ? 'zh' : 'en';
 document.documentElement.lang = language === "en" ? "en" : "zh-CN";
 const listeners = new Set<() => void>();
 export const getLanguage = () => language;
+export function clauseCount(count: number) {
+  return language === 'en' ? `${count} ${count === 1 ? 'clause' : 'clauses'}` : `${count} 项条款`;
+}
 export function setLanguage(value: Language) {
   language = value;
   document.documentElement.lang = value === 'en' ? 'en' : 'zh-CN';

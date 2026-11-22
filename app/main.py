@@ -70,6 +70,8 @@ def config():
     return {"demo": settings.app_demo, "model_mode": settings.model_mode,
             "login_accounts": [{"label": label, "email": email} for label, email in shortcuts if email],
             "model_name": settings.ollama_model if settings.model_mode == "ollama" else settings.model_name if settings.model_mode == "api" else settings.tacc_model,
+            "mail_model_mode": "demo" if settings.model_mode == "demo" else "tacc",
+            "mail_model_name": settings.tacc_model if settings.model_mode != "demo" else "",
             "api_model_name": settings.model_name, "api_configured": bool(settings.llm_base_url and settings.llm_api_key and settings.model_name),
             "categories": [{"id": key, "label": value[0]} for key, value in RULES.items()],
             "mailbox": settings.mailbox,

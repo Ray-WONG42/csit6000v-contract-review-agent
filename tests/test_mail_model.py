@@ -18,6 +18,9 @@ def test_live_mail_is_snapshotted_and_executed_on_tacc(client, sample, monkeypat
     monkeypatch.setattr(settings, 'mail_auto_review', True)
     monkeypatch.setattr(tacc_sdk, 'sdk_executable', lambda: 'tcloud')
     user = login(client)
+    config = client.get('/api/config').json()
+    assert config['mail_model_mode'] == 'tacc'
+    assert config['model_mode'] == default_mode
     marked = []
     class Inbox:
         def attachments(self, message): return [('a', 'synthetic.txt', sample)]
@@ -70,3 +73,8 @@ def test_mail_does_not_fall_back_to_independent_api_without_tacc(client, sample,
         assert not db.scalars(select(Job)).all()
         assert not db.scalars(select(Contract)).all()
         assert not db.scalars(select(File)).all()
+
+
+def test_offline_mail_header_still_identifies_demo(client):
+    assert settings.model_mode == 'demo'
+    assert client.get('/api/config').json()['mail_model_mode'] == 'demo'

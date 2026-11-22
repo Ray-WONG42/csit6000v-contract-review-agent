@@ -1,5 +1,6 @@
 {
   "关键词检索": "Keyword search",
+  "邮件审查模型": "Email review model",
   "远端任务仍在等待，系统会自动继续…": "Waiting for the remote task; processing will continue automatically…",
   "远端任务仍在排队或处理中，系统将继续等待": "The remote task is queued or processing. Waiting will continue automatically.",
   "远端任务排队或处理中": "Remote task queued or processing",

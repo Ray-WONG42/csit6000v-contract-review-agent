@@ -734,8 +734,12 @@ function App() {
               </select>
             </label>
           ) : (
-            <span className={"mode " + (demoMode ? "" : "live")}>
-              <span /> {t(modelLabel(config?.model_mode, config?.model_name))}
+            <span className={"mode " + (demoMode ? "" : "live")}
+              aria-label={user.role === "admin" ? t("邮件审查模型") : undefined}
+              title={user.role === "admin" ? t("邮件审查模型") : undefined}>
+              <span /> {t(user.role === "admin"
+                ? modelLabel(config?.mail_model_mode || (demoMode ? "demo" : "tacc"), config?.mail_model_name)
+                : modelLabel(config?.model_mode, config?.model_name))}
             </span>
           ))}
           {t(user.role === "legal" && (

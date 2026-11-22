@@ -6,8 +6,58 @@ Evidence-grounded contract review, general tool-assisted conversation and automa
 
 The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible API and local Ollama are supported for development. Offline demo mode verifies the engineering workflow without claiming live model reasoning.
 
+## Getting Started Instructions
+
+Prerequisites: Git and Python 3.12.x. Node is not required for the packaged demo. No API key is required for the offline check.
+
+```bash
+git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
+cd csit6000v-contract-review-agent
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+.venv/bin/python demo.py
+```
+
+On Windows, use `python` and `.\.venv\Scripts\python.exe` as in the reproduction section below. `.env.example` sets `CONTRACT_VECTOR_SEARCH=1`. The offline demo does not call Ollama or TACC.
+
+Expected output of `demo.py` is a zero exit code and:
+
+```json
+{"status":"PASS","mode":"demo","tool_called":true,"artifact_count":1}
+```
+
+Then `.venv/bin/python scripts/launch.py` serves the workbench at `http://127.0.0.1:8765`. Sign in as `legal@example.com` / `LegalDemo2026!` and upload `fixtures/Acme-Service-Agreement.pdf`. The risk table should show the eight review rows, with citations that open the source paragraph.
+
+## Detailed Instructions
+
+Main comparison:
+
+```bash
+.venv/bin/python evals/run.py --manifest fixtures/eval-manifest.json --mode demo --output data/evaluation-results.json
+```
+
+Test cases are the two synthetic contracts in `fixtures/eval-manifest.json`: `Acme-Service-Agreement.txt` (positive gold spans) and `Negative-Contract.txt` (empty gold for every category). Gold categories are termination, liability cap, governing law, automatic renewal, audit rights, assignment, insurance, and agreement date. The command runs `full`, `bm25`, and `retrieval` on each. `data/evaluation-results.json` records, per method, hit rate at token-overlap F1 0.5, mean span F1, false-positive rate, unresolved pairs, token counts, and median and 95th-percentile seconds. In demo mode the file note says the run checks the harness, not live model quality. The command does not build FAISS hits and it is not a CUAD score.
+
+Also:
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python scripts/smoke_web.py
+```
+
+Optional vector check, after `ollama pull embeddinggemma:300m-qat-q4_0`:
+
+```bash
+.venv/bin/python scripts/check_embeddings.py
+```
+
+Known limits: demo mode does not measure live Qwen quality. A full CUAD holdout, a live mailbox round trip, and cloud storage are not results of the offline commands. On Windows, `scripts/smoke_web.py` can exit nonzero after a functional pass because temporary SQLite cleanup hits `WinError 32`. `CONTRACT_VECTOR_SEARCH=1` requests FAISS candidates when an embedding service is reachable; if it is not, review continues with BM25.
+
 ## Contents
 
+- [Getting Started Instructions](#getting-started-instructions)
+- [Detailed Instructions](#detailed-instructions)
 - [Project Overview](#project-overview)
 - [Architecture](#architecture)
 - [Environment Prerequisite](#environment-prerequisite)

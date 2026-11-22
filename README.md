@@ -338,15 +338,9 @@ cp .env.example .env
 
 Open `http://127.0.0.1:8765`. Keep the launcher open; Ctrl+C stops API/worker. In subsequent commands, `python` means the venv interpreter above.
 
-| Public offline demo account | Demo password |
-|---|---|
-| `legal@example.com` | `LegalDemo2026!` |
-| `other@example.com` | `OtherDemo2026!` |
-| `admin@example.com` | `AdminDemo2026!` |
+Real use requires your own accounts. Legal users must register through the Web interface, verify their email address and set a password. The administrator account is initialized using `ADMIN_EMAIL` and `ADMIN_PASSWORD` in the local `.env` file; its receiving mailbox requires separate Gmail authorization.
 
-These are public test fixtures, not real account credentials. `APP_DEMO=1` enables demo identities; `MAIL_DEMO=1` keeps email local; `MODEL_MODE=demo` selects offline responses. Configure them independently.
-
-Sign in with one of the demo accounts above. To submit a contract, unzip `CUAD_eight_label_contracts.zip` in the repository root and upload one PDF from the `CUAD_eight_label_contracts/` folder.
+The repository does not include real account credentials or mailbox authorization. Demo accounts apply only to local demo mode and cannot access the configured real-account installation. See **Real account setup** below.
 
 Do not overwrite an existing private `.env` when updating. Existing installations can run `python -m alembic upgrade head` before restarting. Use fresh `APP_DATA` for a separate installation and avoid conflicting launchers.
 
@@ -478,6 +472,8 @@ The maintainer's three real accounts and credentials are not distributed. Reprod
 3. **Two legal users:** register each address through the Web, verify the emailed code and choose a Web-app password of at least 10 characters. They do not need OAuth authorization or to share personal email passwords.
 4. **Optional shortcuts:** `LOGIN_ADMIN_EMAIL`, `LOGIN_LEGAL_EMAIL` and `LOGIN_OTHER_LEGAL_EMAIL` only prefill email fields; they do not create accounts or set passwords.
 5. **Verify the workflow:** configure TACC, keep API/worker running, then send one new test contract from a registered legal address. Confirm intake, report generation and reply to the original sender. Repeat with the second legal account to check isolation.
+
+When a registered legal user submits a contract, unzip `CUAD_eight_label_contracts.zip` in the repository root and use one PDF from the `CUAD_eight_label_contracts/` folder.
 
 Keep `.env`, OAuth files and `data/` private. Email reviews always use TACC; the Web model selector is independent. Offline demo accounts and successful mailbox authentication do not establish a live review/reply test.
 

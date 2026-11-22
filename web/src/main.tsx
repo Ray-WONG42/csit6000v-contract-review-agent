@@ -909,10 +909,6 @@ function App() {
                   <div className="assistant-message">
                     <div className="assistant-name">
                       <div className="small-logo">C</div> Clause{t(" ")}
-                      <span>
-                        {t(modelLabel(job.result?.model_mode || job.model_mode || config?.model_mode,
-                          job.result?.model_name || job.model_name || config?.model_name))}
-                      </span>
                     </div>
                     <div className="trace">
                       <div className="trace-heading">

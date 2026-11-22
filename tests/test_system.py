@@ -341,6 +341,32 @@ def test_tacc_requests_wait_for_one_gpu_service_then_resume(client, monkeypatch,
     assert submissions == ["gpu", "decision", "review"]
 
 
+def test_known_tacc_client_waiting_recovers_without_failure_or_resubmission(client, sample, monkeypatch):
+    from app import tacc_sdk
+    monkeypatch.setattr(settings, 'model_mode', 'ollama')
+    monkeypatch.setattr(settings, 'tacc_protocol', 'sdk')
+    monkeypatch.setattr(tacc_sdk, 'sdk_executable', lambda: 'tcloud')
+    login(client)
+    cid = client.post('/api/contracts', files={'file': ('sample.txt', sample)}).json()['id']
+    jid = client.post(f'/api/contracts/{cid}/jobs', json={
+        'request_key': 'resume-known-client', 'model_mode': 'tacc'}).json()['id']
+    with session() as db:
+        db.add(Checkpoint(job_id=jid, key='tacc_client', value=json.dumps({'run': 'a' * 32, 'job_id': '123'})))
+    monkeypatch.setattr(tacc_sdk, 'submit', lambda *_: pytest.fail('Resubmitted known client'))
+    def pending(*_): raise tacc_sdk.TaccClientPending('123')
+    monkeypatch.setattr(tacc_sdk, 'wait_for_result', pending)
+    execute()
+    status = client.get(f'/api/jobs/{jid}').json()
+    assert status['state'] == 'tacc_client' and not status['error']
+    with session() as db:
+        job = db.get(Job, jid)
+        assert job.attempts == 0
+        job.lease = 0
+    monkeypatch.setattr(tacc_sdk, 'wait_for_result', lambda *_: {'result': {'state': 'complete', 'rows': []}})
+    execute()
+    assert client.get(f'/api/jobs/{jid}').json()['state'] == 'completed'
+
+
 def test_idempotency_and_new_question(client, sample):
     login(client)
     cid, jid = submit(client, sample)

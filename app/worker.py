@@ -11,14 +11,15 @@ from .security import digest
 from .services import ACTIVE_REVIEW_STATES, write_file, ingest, create_job, graph_client, deliver_pending, remove_deleted_files
 from .schemas import JobInput
 from .retrieval import vector_matches
-from .tacc_sdk import SERVICE_RECHECK_SECONDS, TaccServicePending, queued_service_base
+from .tacc_sdk import SERVICE_RECHECK_SECONDS, TaccServicePending, TaccClientPending, queued_service_base
 from engine import parse, review, Model, report_text, docx_report
 
 ACTIVE = ACTIVE_REVIEW_STATES[1:]
 
 
-def defer_for_tacc(task):
-    task.state, task.claim, task.lease = "waiting_tacc", "", time.time() + SERVICE_RECHECK_SECONDS
+def defer_for_tacc(task, state="waiting_tacc"):
+    task.state, task.claim, task.lease = state, "", time.time() + SERVICE_RECHECK_SECONDS
+    task.error = ""
     task.attempts -= 1  # Waiting for the scheduler does not consume an execution attempt.
 
 
@@ -154,10 +155,12 @@ def run_job(job_id, claim):
         with session() as db:
             job = db.get(Job, job_id)
             if job and job.claim == claim:
-                defer_for_tacc(job)
+                client_pending = isinstance(exc, TaccClientPending)
+                defer_for_tacc(job, "tacc_client" if client_pending else "waiting_tacc")
                 job.updated = time.time()
-                if db.scalar(select(Event.id).where(Event.job_id == job_id, Event.stage == "tacc_service").limit(1)) is None:
-                    db.add(Event(job_id=job_id, stage="tacc_service", title=str(exc), detail=""))
+                stage = "tacc_client_wait" if client_pending else "tacc_service"
+                if db.scalar(select(Event.id).where(Event.job_id == job_id, Event.stage == stage).limit(1)) is None:
+                    db.add(Event(job_id=job_id, stage=stage, title=str(exc), detail=""))
     except Exception as exc:
         with session() as db:
             job = db.get(Job, job_id)
@@ -339,9 +342,11 @@ def run_assistant_once():
             current = db.get(AssistantRun, run_id)
             if current.claim == claim:
                 defer_for_tacc(current)
+                current.updated = time.time()
                 events = json.loads(current.events)
-                if not events or events[-1]["stage"] != "tacc_service":
-                    events.append({"stage": "tacc_service", "title": str(exc), "detail": "", "created": time.time()})
+                stage = "tacc_client_wait" if isinstance(exc, TaccClientPending) else "tacc_service"
+                if not any(event["stage"] == stage for event in events):
+                    events.append({"stage": stage, "title": str(exc), "detail": "", "created": time.time()})
                     current.events = dump(events)
     except Exception as exc:
         with session() as db:

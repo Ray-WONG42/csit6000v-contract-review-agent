@@ -99,7 +99,7 @@ export default function AssistantChat({
         const next = latest.current.map(message => message.id === active!.id ? {
           ...message, events: data.events, pending: !finished,
           text: finished ? data.result.answer || data.error || t("处理完成")
-            : data.state === "waiting_tacc" ? t("等待学校 GPU 集群…") : "",
+            : data.state === "waiting_tacc" ? t("远端任务仍在等待，系统会自动继续…") : "",
           output: data.result, error: data.error,
         } : message);
         latest.current = next; setMessages(next);

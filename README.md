@@ -231,6 +231,7 @@ Chat history persists locally in the browser. Backend runs/checkpoints can also 
 - Use a conservative UTF-8 size bound, not an exact model tokenizer. Reduce summaries/excerpts before sending; report irreducible overflow explicitly.
 - Split oversized extraction groups, validate each group's quotes and merge evidence.
 - Persist request identity, job leases, checkpoints and SDK submission receipts. Unknown submissions require inspection/adoption.
+- A local client polling window expiring does not fail a queued or running TACC job. The worker retains its job ID and resumes waiting; transient result-read connections are also retried without resubmission. Confirmed remote failures still surface as errors.
 - Track delivery separately from review completion; network ambiguity prevents a general exactly-once delivery guarantee.
 
 See [context management](docs/CONTEXT_MANAGEMENT.md).
@@ -365,6 +366,8 @@ LLM_TIMEOUT=90
 The URL is a placeholder, not a working service. Use an API base, not a browser chat page. Match limits to the real provider. Restart API/worker and run `python scripts/check_connections.py --live`.
 
 The selector keeps API and Qwen TACC separate. Choosing API does not submit TACC jobs. The backend default model also controls unattended email review.
+
+When TACC is configured, it appears first and is the default for new Web requests. An explicit later selection is remembered per account in the browser. This Web preference does not change the backend default used by unattended email reviews.
 
 ### 3. Optional local embeddings
 

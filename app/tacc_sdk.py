@@ -65,7 +65,8 @@ class TaccSDKError(RuntimeError):
             self.code, cause = "file_missing", "远端文件尚不存在"
         elif isinstance(exc, subprocess.TimeoutExpired):
             self.code, cause = "timeout", "连接超时"
-        elif any(x in text for x in ("handshake", "failed to dial", "remote session", "connection reset")):
+        elif any(x in text for x in ("handshake", "failed to dial", "remote session", "connection reset",
+                                      "unexpected eof", "connection timed out", "i/o timeout", "broken pipe")):
             self.code, cause = "connection", "SSH 连接失败"
         elif "no such file" in text:
             cause = "远端文件尚不存在"
@@ -152,6 +153,13 @@ class TaccServicePending(Exception):
     def __init__(self, job_id):
         self.job_id = job_id
         super().__init__("等待学校 GPU 集群启动 Qwen")
+
+
+class TaccClientPending(TaccServicePending):
+    """A known submitted job remains resumable; never submit a replacement."""
+    def __init__(self, job_id):
+        self.job_id = job_id
+        Exception.__init__(self, "远端任务仍在排队或处理中，系统将继续等待")
 
 
 class TaccServiceError(RuntimeError):
@@ -265,6 +273,15 @@ def queued_service_base(checkpoint):
     raise TaccServicePending(record["job_id"])
 
 
+def read_client_result(run):
+    envelope = json.loads(sdk(["cat", f"clause-results/{run}.json"], timeout=60))
+    if "error" in envelope:
+        if envelope['error'] == 'ContextBudgetExceeded':
+            raise ValueError('聊天或审查请求超出 TACC 上下文预算，请缩小请求范围；这不是网络断线。')
+        raise RuntimeError("TACC 模型执行失败 (" + envelope["error"] + ")")
+    return envelope
+
+
 def wait_for_result(run, remote_id, event):
     deadline = time.monotonic() + settings.tacc_sdk_timeout
     seen = 0
@@ -283,12 +300,7 @@ def wait_for_result(run, remote_id, event):
             event(stage, title, "")
         seen = len(lines)
         if f"CLAUSE_RESULT_READY {run}" in log:
-            envelope = json.loads(sdk(["cat", f"clause-results/{run}.json"], timeout=60))
-            if "error" in envelope:
-                if envelope['error'] == 'ContextBudgetExceeded':
-                    raise ValueError('聊天或审查请求超出 TACC 上下文预算，请缩小请求范围；这不是网络断线。')
-                raise RuntimeError("TACC 模型执行失败 (" + envelope["error"] + ")")
-            return envelope
+            return read_client_result(run)
         if "Traceback (most recent call last)" in log or "Exited with exit code" in log or "CANCELLED" in log:
             raise RuntimeError("TACC 客户端执行失败，请查看作业日志 " + remote_id)
         # tcloud invokes a WSL subprocess for each read on Windows. Start with
@@ -297,7 +309,17 @@ def wait_for_result(run, remote_id, event):
         if remaining > 0:
             time.sleep(min(poll_delay, remaining))
         poll_delay = min(12, poll_delay + 2)
-    raise TimeoutError("TACC 客户端等待超时，作业编号 " + remote_id)
+    # Expiry of one local polling window is not failure of the remote job.
+    # Pending and running jobs retain their receipt and resume in the worker.
+    if service_job_active(remote_id):
+        raise TaccClientPending(remote_id)
+    try:
+        # The job may have completed after the last log read.
+        return read_client_result(run)
+    except TaccSDKError as exc:
+        if exc.code != "file_missing":
+            raise
+        raise RuntimeError("远端作业已结束，但未找到处理结果，请检查作业日志 " + remote_id) from exc
 
 
 def run_remote(operation, event, checkpoint=None, *, auto_start=False, **arguments):
@@ -342,7 +364,14 @@ def run_remote(operation, event, checkpoint=None, *, auto_start=False, **argumen
             event("queue", "TACC 客户端已提交", remote_id)
         finally:
             request.unlink(missing_ok=True)
-    envelope = wait_for_result(run, remote_id, event)
+    try:
+        envelope = wait_for_result(run, remote_id, event)
+    except TaccSDKError as exc:
+        if exc.code in {"timeout", "connection"}:
+            # Only reads of a known client are resumable here. Ambiguous submit
+            # failures above still block, rather than creating duplicate jobs.
+            raise TaccClientPending(remote_id) from exc
+        raise
     for stage, title, detail in envelope.get("events", []):
         if detail and stage in {"validate", "review", "scope", "retrieve", "expand"}:
             event("detail", title, detail)

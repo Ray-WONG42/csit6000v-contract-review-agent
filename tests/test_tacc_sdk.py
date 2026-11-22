@@ -43,6 +43,47 @@ def test_wait_for_results_reads_structured_file(monkeypatch):
     assert sent == [("model", "Call Qwen", "")]
 
 
+@pytest.mark.parametrize('state', ['PD', 'R'])
+def test_polling_window_expiry_keeps_active_client_pending(monkeypatch, state):
+    clock = iter([0, 1000])
+    monkeypatch.setattr(tacc_sdk.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(tacc_sdk, 'sdk', lambda args, **kw: f'123 task user {state}')
+    with pytest.raises(tacc_sdk.TaccClientPending) as pending:
+        tacc_sdk.wait_for_result('a' * 32, '123', lambda *_: None)
+    assert pending.value.job_id == '123'
+
+
+def test_expired_poll_reads_result_of_just_finished_job(monkeypatch):
+    clock = iter([0, 1000])
+    monkeypatch.setattr(tacc_sdk.time, 'monotonic', lambda: next(clock))
+    def sdk(args, **kw):
+        if args[0] == 'ps':
+            raise tacc_sdk.TaccSDKError('ps', RuntimeError('Invalid job id specified'))
+        assert args == ['cat', 'clause-results/' + 'a' * 32 + '.json']
+        return '{"result":{"ok":true}}'
+    monkeypatch.setattr(tacc_sdk, 'sdk', sdk)
+    assert tacc_sdk.wait_for_result('a' * 32, '123', lambda *_: None)['result']['ok']
+
+
+def test_transient_read_resumes_same_client_without_submission(monkeypatch):
+    import subprocess
+    saved = {'run': 'a' * 32, 'job_id': '123'}
+    monkeypatch.setattr(tacc_sdk, 'submit', lambda *_: pytest.fail('Duplicate client'))
+    def timeout(*_):
+        raise tacc_sdk.TaccSDKError('cat', subprocess.TimeoutExpired('sdk', 60))
+    monkeypatch.setattr(tacc_sdk, 'wait_for_result', timeout)
+    with pytest.raises(tacc_sdk.TaccClientPending):
+        tacc_sdk.run_remote('review', lambda *_: None, lambda key: saved)
+    monkeypatch.setattr(tacc_sdk, 'wait_for_result', lambda *args: {'result': {'rows': []}})
+    assert tacc_sdk.run_remote('review', lambda *_: None, lambda key: saved)['tacc_client_job'] == '123'
+
+
+def test_confirmed_client_failure_is_not_hidden_as_waiting(monkeypatch):
+    monkeypatch.setattr(tacc_sdk, 'sdk', lambda *a, **kw: 'CANCELLED: time limit')
+    with pytest.raises(RuntimeError, match='客户端执行失败'):
+        tacc_sdk.wait_for_result('a' * 32, '123', lambda *_: None)
+
+
 def test_read_timeout_retries_but_submission_does_not(monkeypatch):
     import subprocess
     calls = []

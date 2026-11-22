@@ -104,7 +104,7 @@ const activeStates = [
 const statusLabel: Record<string, string> = {
   queued: "排队中",
   waiting_tacc: "等待学校 GPU 集群",
-  tacc_client: "等待 TACC 回复",
+  tacc_client: "远端任务排队或处理中",
   parsing: "解析合同",
   surveying: "通读合同",
   extracting: "提取条款",
@@ -162,7 +162,7 @@ function App() {
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [ollamaModelsError, setOllamaModelsError] = useState("");
   const canSelectModel = Boolean(config && config.model_mode !== "demo" && user?.role === "legal");
-  const preference = canSelectModel ? modelPreference : "";
+  const preference = canSelectModel ? (modelPreference || (config.tacc_configured ? "tacc" : "")) : "";
   const requestedMode = preference === "tacc" ? "tacc" : preference === "api" ? "api" : preference.startsWith("ollama:") ? "ollama" : "";
   const ollamaModel = requestedMode === "ollama" ? preference.slice("ollama:".length) : "";
   const selectedModelOption = preference || (config?.model_mode === "tacc" ? "tacc" : config?.model_mode === "api" ? "api" : "");
@@ -230,9 +230,9 @@ function App() {
     setError("");
     userRef.current = value;
     try {
-      const previousOllamaModel = localStorage.getItem("ollama-model:" + value.id);
-      setModelPreference(localStorage.getItem("model-selection-v2:" + value.id) ??
-        (previousOllamaModel ? `ollama:${previousOllamaModel}` : ""));
+      // A new preference version applies the TACC-first default once. Choices
+      // made explicitly after this update remain account-scoped and remembered.
+      setModelPreference(localStorage.getItem("model-selection-v3:" + value.id) || "");
     } catch {
       setModelPreference("");
     }
@@ -261,7 +261,7 @@ function App() {
   function chooseModel(model: string, userId: string) {
     setModelPreference(model);
     try {
-      localStorage.setItem("model-selection-v2:" + userId, model);
+      localStorage.setItem("model-selection-v3:" + userId, model);
     } catch {
       // The selection still applies within the current browser session.
     }
@@ -715,8 +715,12 @@ function App() {
               <span aria-hidden="true" />
               <select aria-label={t("选择对话与审查模型")} value={selectedModelOption}
                 onChange={(event) => chooseModel(event.target.value, user.id)}>
+                <option value="tacc" disabled={!config.tacc_configured}>
+                  {t(modelLabel("tacc"))}{t(!config.tacc_configured && t("（连接未配置）"))}
+                </option>
+                <option value="api" disabled={!config.api_configured}>{modelLabel("api", config.api_model_name)}</option>
                 {t(config.model_mode === "ollama" && (
-                  <option value="">{t(modelLabel("ollama", config.model_name))}</option>
+                  <option value={`ollama:${config.model_name}`}>{t(modelLabel("ollama", config.model_name))}</option>
                 ))}
                 {t(ollamaModel && !ollamaModels?.includes(ollamaModel) && (
                   <option value={`ollama:${ollamaModel}`}>{t(modelLabel("ollama", ollamaModel))}{t(ollamaModels && t("（不可用）"))}</option>
@@ -724,10 +728,6 @@ function App() {
                 {t(ollamaModels?.filter((name) => name !== config.model_name || name === ollamaModel).map((name) => (
                   <option key={name} value={`ollama:${name}`}>{t(modelLabel("ollama", name))}</option>
                 )))}
-                <option value="api" disabled={!config.api_configured}>{modelLabel("api", config.api_model_name)}</option>
-                <option value="tacc" disabled={!config.tacc_configured}>
-                  {t(modelLabel("tacc"))}{t(!config.tacc_configured && t("（连接未配置）"))}
-                </option>
                 {t(!ollamaModels?.length && (
                   <option disabled>{t(ollamaModelsError || (ollamaModels ? t("暂无已安装的对话模型") : t("正在读取模型列表…")))}</option>
                 ))}

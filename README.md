@@ -467,7 +467,17 @@ Optional `GMAIL_HTTPS_PROXY` affects the Gmail API adapter only. Alternative `GM
 
 The optional Outlook adapter remains available through `MAIL_PROVIDER=outlook` and `GRAPH_*` fields.
 
-For private account bootstrap, use fresh data with `APP_DEMO=0`, `ADMIN_EMAIL` and `ADMIN_PASSWORD` of at least 12 characters before first launch. Legal users register with email verification and their own passwords. Optional `LOGIN_LEGAL_EMAIL`, `LOGIN_OTHER_LEGAL_EMAIL` and `LOGIN_ADMIN_EMAIL` set email-only shortcuts.
+#### Real account setup
+
+The maintainer's three real accounts and credentials are not distributed. Reproducers must use their own administrator mailbox and legal-user addresses.
+
+1. **Administrator:** before first launch, set `APP_DEMO=0`, a fresh `APP_DATA=data/real-runtime`, `ADMIN_EMAIL` and a new Web-app `ADMIN_PASSWORD` of at least 12 characters. Normally use the same address for `ADMIN_EMAIL` and `GMAIL_MAILBOX`.
+2. **Mailbox authorization:** only the administrator Gmail needs the Desktop OAuth setup and commands above. Enable real mail with `MAIL_DEMO=0`, `GMAIL_TRANSPORT=oauth` and `MAIL_AUTO_REVIEW=1`. No Google login password is required by the application.
+3. **Two legal users:** register each address through the Web, verify the emailed code and choose a Web-app password of at least 10 characters. They do not need OAuth authorization or to share personal email passwords.
+4. **Optional shortcuts:** `LOGIN_ADMIN_EMAIL`, `LOGIN_LEGAL_EMAIL` and `LOGIN_OTHER_LEGAL_EMAIL` only prefill email fields; they do not create accounts or set passwords.
+5. **Verify the workflow:** configure TACC, keep API/worker running, then send one new test contract from a registered legal address. Confirm intake, report generation and reply to the original sender. Repeat with the second legal account to check isolation.
+
+Keep `.env`, OAuth files and `data/` private. Email reviews always use TACC; the Web model selector is independent. Offline demo accounts and successful mailbox authentication do not establish a live review/reply test.
 
 ### 6. Frontend development and deployment
 

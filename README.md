@@ -83,7 +83,7 @@ Known limits: demo mode does not measure live Qwen quality. A full CUAD holdout,
 | Three-panel Web | History/company grouping, current chat/tool events, source/risk table/report panel |
 | Bilingual UI | Chinese/English interface, output instructions and preset files |
 | Private Skills | Account-owned reusable checks with version snapshots |
-| Automatic email | Review registered legal users' contracts and reply with saved results |
+| Automatic email | Review registered legal users' contracts through TACC and reply with saved results |
 | Execution harness | Durable jobs, checkpoints, ownership, submission and delivery records |
 
 ### Agent workflow
@@ -146,16 +146,16 @@ These are defaults, not the required answer format for every question. A selecte
 
 ### Automatic administrator-mailbox review
 
-**The configured administrator mailbox automatically processes contract attachments from registered legal accounts and emails the generated result back to the registered original sender.** With `MAIL_POLL_SECONDS=60`, the worker checks for new mail approximately once per minute while running.
+**The configured administrator mailbox automatically reviews contract attachments from registered legal accounts through TACC and emails the generated result back to the registered original sender.** With `MAIL_POLL_SECONDS=60`, the worker checks for new mail approximately once per minute while running.
 
 1. A registered legal user emails one supported contract attachment to the administrator mailbox.
 2. The worker polls new messages, matches the sender to the registered account and saves an intake receipt.
-3. The default review pipeline processes the contract and saves verified findings and the final report.
+3. The TACC review pipeline processes the contract and saves verified findings and the final report.
 4. The worker emails the saved result back to the registered original sender.
 
 - The sender must match a **registered legal account**. Intake and results belong to that account.
 - Each message must contain **one valid supported contract attachment**; multiple valid attachments are not silently merged.
-- Automatic intake uses the standard review instruction and the backend default model. A user's last browser model/Skill selection does not change this workflow.
+- Live email intake uses the standard review instruction and **always selects TACC**, independently of the Web model selection or `MODEL_MODE` default. It does not fall back to DeepSeek/API or Ollama. Offline `MODEL_MODE=demo` remains a deterministic local demonstration.
 - New email reviews use the sending legal account's saved interface/output language. Optional subject `[LANG=en]` or `[LANG=zh]` overrides the account preference for that message. Quotations preserve their source language.
 - The recipient comes from the account/intake record, **never from model output**.
 - Receipts, mailbox cursors and saved delivery states reduce repeated processing. Uncertain sends require reconciliation rather than blind retries.
@@ -365,9 +365,9 @@ LLM_TIMEOUT=90
 
 The URL is a placeholder, not a working service. Use an API base, not a browser chat page. Match limits to the real provider. Restart API/worker and run `python scripts/check_connections.py --live`.
 
-The selector keeps API and Qwen TACC separate. Choosing API does not submit TACC jobs. The backend default model also controls unattended email review.
+The Web selector keeps API and Qwen TACC separate. Web chats and reviews use the selected backend; choosing API for a Web request does not submit a TACC job. Automatic email reviews are routed separately and remain fixed to TACC.
 
-When TACC is configured, it appears first and is the default for new Web requests. An explicit later selection is remembered per account in the browser. This Web preference does not change the backend default used by unattended email reviews.
+When TACC is configured, it appears first and is the default for new Web requests. Users can select DeepSeek/API or an installed Ollama chat model instead, and explicit choices are remembered per account in the browser. This Web preference does not change TACC routing for unattended email reviews.
 
 ### 3. Optional local embeddings
 
@@ -437,6 +437,8 @@ SDK status-read, client-job and model-inference timeouts are separate. Read retr
 ### 5. Configure administrator Gmail automation
 
 Recommended: **Gmail HTTPS API with Desktop OAuth**. This avoids dependence on SMTP ports without disabling TLS.
+
+Configure the TACC backend described in step 4 before using live email reviews. The mailbox always uses TACC for inference even when the Web is set to DeepSeek/API; a working Gmail connection alone does not establish TACC availability.
 
 1. Enable Gmail API in your Google project; create a Desktop OAuth client and configure consent/test users as required.
 2. Save the downloaded client JSON under ignored `data/`.
@@ -519,7 +521,7 @@ Success: an actual `save_skill` event and a Skill owned by the current account. 
 | Skill reuse | Explicitly save payment Skill, then select it | Owned Skill and snapshotted custom checks |
 | Vectors | `python scripts/check_embeddings.py` | Real vectors and expected cross-language hit |
 | Ownership | Request another legal user's record | Denied without leaking content |
-| Email loop | Registered legal user emails one new attachment | Intake, owned review, saved report, reply to original registered sender |
+| Email loop | Registered legal user emails one new attachment | Intake, TACC review, saved report, reply to original registered sender |
 | Mail panel | Compare admin and legal accounts | Recent metadata for admin; administrator address only for legal |
 | Language | Switch language and create new output | Translated UI/presets/output; original-language quotes |
 
@@ -646,7 +648,7 @@ Saving does not automatically select a Skill for every future review. Select it 
 | Vector database missing | Indexes are per-contract and in memory; no persisted import required. Reserved fields do not enable another backend. |
 | Vectors absent with API/TACC | Set `CONTRACT_VECTOR_SEARCH=1` and check backend reachability to Ollama/fallback events. |
 | Tool JSON invalid | Check model JSON ability, prompts and output budget; expected format is the action envelope. |
-| Gmail receives without replying | Check worker, real-mail/auto-review settings, registered sender, default model, review state and delivery state. |
+| Gmail receives without replying | Check worker, real-mail/auto-review settings, registered sender, TACC service/client state and delivery state. The Web model selection does not change the email backend. |
 | Message skipped | Register/verify exact sender first; send one new supported attachment. First-sync history/old skipped receipts are not automatically backfilled. |
 | SMTP disconnects before login | Check route; use HTTPS OAuth instead of disabling TLS or repeatedly changing passwords. |
 | OAuth fails/expires | Check Desktop client, consent/test users, authorized mailbox and provider policy; reauthorize locally if needed. |

@@ -11,8 +11,8 @@ The course assessment backend is **TACC Qwen**. An independent OpenAI-compatible
 Prerequisites: Git and Python 3.12.x. Node is not required for the packaged demo. No API key is required for the offline check.
 
 ```bash
-git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
-cd csit6000v-contract-review-agent
+git clone https://github.com/Ray-WONG42/csit6000v-group10-contract-review-agent.git
+cd csit6000v-group10-contract-review-agent
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
@@ -313,8 +313,8 @@ Choose a platform. Ensure the version command shows Python 3.12.x.
 **Windows PowerShell**
 
 ```powershell
-git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
-cd csit6000v-contract-review-agent
+git clone https://github.com/Ray-WONG42/csit6000v-group10-contract-review-agent.git
+cd csit6000v-group10-contract-review-agent
 python --version
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -326,8 +326,8 @@ Copy-Item .env.example .env
 **Linux / macOS**
 
 ```bash
-git clone https://github.com/Ray-WONG42/csit6000v-contract-review-agent.git
-cd csit6000v-contract-review-agent
+git clone https://github.com/Ray-WONG42/csit6000v-group10-contract-review-agent.git
+cd csit6000v-group10-contract-review-agent
 python3 --version
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt

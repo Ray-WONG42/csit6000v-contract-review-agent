@@ -77,7 +77,7 @@ class SkillInput(BaseModel):
 
 
 class JobInput(BaseModel):
-    language: Literal["zh", "en"] = "zh"
+    language: Literal["zh", "en"] = "en"
     instruction: str = Field(default="", max_length=4000)
     skill_id: str = Field(default="", max_length=64)
     parent_id: str = Field(default="", max_length=64)
@@ -166,7 +166,7 @@ class ChatMessage(BaseModel):
 
 
 class AssistantInput(BaseModel):
-    language: Literal["zh", "en"] = "zh"
+    language: Literal["zh", "en"] = "en"
     request_key: str = Field(min_length=8, max_length=100)
     message: str = Field(min_length=1, max_length=6000)
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)

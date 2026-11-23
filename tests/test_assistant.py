@@ -26,6 +26,26 @@ def runner(client, message="你好", **extra):
     return user, request, checkpoint
 
 
+@pytest.mark.parametrize('language', ['en', 'zh'])
+def test_selected_language_reaches_api_and_remote_decisions(client, monkeypatch, language):
+    user, request, checkpoint = runner(client, language=language)
+    monkeypatch.setattr(settings, 'model_mode', 'api')
+    def call(model, system, payload, phase):
+        assert model.output_language == language
+        assert ('Use English' if language == 'en' else '使用中文') in system
+        return {'action': 'final', 'answer': 'Synthetic result'}
+    monkeypatch.setattr(Model, 'call', call)
+    assert run_assistant(user['id'], request, 'language-check', lambda *_: None, checkpoint)['answer'] == 'Synthetic result'
+    monkeypatch.setattr(settings, 'tacc_protocol', 'sdk')
+    def remote(operation, event, checkpoint, **arguments):
+        assert operation == 'decision'
+        assert arguments['language'] == language
+        return {'action': 'final', 'answer': 'Synthetic remote result'}
+    monkeypatch.setattr(tacc_sdk, 'run_remote', remote)
+    model = SimpleNamespace(mode='tacc', output_language=language, event=lambda *_: None)
+    assert assistant.model_decision('system', {}, model, checkpoint)['answer'] == 'Synthetic remote result'
+
+
 def test_ordinary_chat_does_not_force_a_contract(client, monkeypatch):
     user, request, checkpoint = runner(client)
     monkeypatch.setattr(settings, "model_mode", "tacc")
@@ -181,8 +201,10 @@ def test_model_named_checks_preserve_custom_questions():
     assert args.skill.custom_items[0].question == "收到发票后45日内付款"
 
 
-def test_repeated_invalid_tool_stops_after_two_attempts(client, monkeypatch):
+@pytest.mark.parametrize('language', ['en', 'zh'])
+def test_repeated_invalid_tool_stops_after_two_attempts(client, monkeypatch, language):
     user, request, checkpoint = runner(client, "请创建Skill")
+    request['language'] = language
     monkeypatch.setattr(settings, "model_mode", "tacc")
     decisions = []
     def decide(*_):
@@ -191,5 +213,5 @@ def test_repeated_invalid_tool_stops_after_two_attempts(client, monkeypatch):
             "name": "invalid", "categories": ["unknown"]}}}
     result = run_assistant(user["id"], request, "retry-cap", lambda *_: None, checkpoint, decide)
     assert len(decisions) == 2
-    assert "连续两次" in result["answer"]
+    assert ("failed twice" if language == 'en' else "连续两次") in result["answer"]
     assert result["artifacts"] == []

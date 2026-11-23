@@ -11,6 +11,22 @@ from app.services import deliver_pending, send_mail
 from app.worker import receive_message, claim_job, run_job
 
 
+@pytest.mark.parametrize('language', [None, 'en', 'zh'])
+def test_task_language_defaults_to_english_and_preserves_explicit_selection(client, sample, language):
+    from app.schemas import AssistantInput
+    login(client)
+    cid = client.post('/api/contracts', files={'file': ('language.txt', sample)}).json()['id']
+    payload = {'request_key': 'language-default-check'}
+    if language:
+        payload['language'] = language
+    response = client.post(f'/api/contracts/{cid}/jobs', json=payload)
+    assert response.status_code == 200
+    expected = language or 'en'
+    with session() as db:
+        assert json.loads(db.get(Job, response.json()['id']).skill)['language'] == expected
+    assert AssistantInput(message='Review this contract', **payload).language == expected
+
+
 def test_language_is_authenticated_validated_and_account_scoped(client):
     assert client.put('/api/auth/language', json={'language': 'en'}).status_code == 401
     first = login(client)

@@ -122,7 +122,7 @@ def run_job(job_id, claim):
             model.calls = checkpoint("model_calls") or []
             model.save_calls = lambda calls: checkpoint("model_calls", calls)
             result = review(paragraphs, skill, job.instruction, model, checkpoint=checkpoint, vector_hits=vector_hits)
-        result["language"] = skill.get("language", "zh")
+        result["language"] = skill.get("language", "en")
         if result["language"] == "en":
             from .localization import text_for
             for row in result.get("rows", []):

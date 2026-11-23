@@ -1,7 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
-import translations from './translations.json';
+import { systemText, localizedTraceTitle, localizedTraceDetail } from './traceLocalization';
 export type Language = 'zh' | 'en';
-const dictionary: Record<string, string> = translations;
 let language: Language = 'en';
 try { language = localStorage.getItem('clause-language') === 'zh' ? 'zh' : 'en'; } catch { /* storage optional */ }
 document.documentElement.lang = language === "en" ? "en" : "zh-CN";
@@ -21,14 +20,13 @@ export function useLanguage() {
 }
 export function t<T>(value: T): T {
   if (language !== 'en' || typeof value !== 'string') return value;
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  return (dictionary[value] ?? dictionary[normalized] ?? value) as T;
+  return systemText(value, language) as T;
 }
 export function traceTitle(event: { stage: string; title: string }) {
-  return t(event.stage === 'model' ? '调用模型' : event.title);
+  return localizedTraceTitle(event, language);
 }
 export function traceDetail(event: { stage: string; detail: string }) {
-  return event.stage === 'model' ? '' : t(event.detail);
+  return localizedTraceDetail(event, language);
 }
 export function LanguageSwitch({ onChange, floating = false }: {
   onChange: (value: Language) => Promise<void> | void;
@@ -37,7 +35,7 @@ export function LanguageSwitch({ onChange, floating = false }: {
   const value = useLanguage();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const label = value === 'zh' ? 'Switch to English' : '切换为中文';
+  const label = value === 'zh' ? '切换为英文' : 'Switch to Chinese';
   async function toggle() {
     setPending(true);
     setError('');

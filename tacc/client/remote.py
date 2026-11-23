@@ -49,6 +49,7 @@ def main():
         traces.append([stage, title, detail])
         print("CLAUSE_PROGRESS", json.dumps([stage, title], ensure_ascii=True), flush=True)
     model = Model(event, "tacc")
+    model.output_language = request.get("language", "en")
     start = time.monotonic()
     try:
         deadline = time.monotonic() + 360

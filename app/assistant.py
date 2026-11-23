@@ -103,7 +103,8 @@ def model_decision(system, payload, model, checkpoint):
         raise ValueError("当前为本地演示模式。通用聊天需要启用 Ollama 或 TACC。可使用 /搜索 关键词、/读取 HTTPS链接、/创建Skill JSON 和 /生成文档 内容。")
     if model.mode == "tacc" and settings.tacc_protocol == "sdk":
         from .tacc_sdk import run_remote
-        return run_remote("decision", model.event, checkpoint, auto_start=True, system=system, payload=payload)
+        return run_remote("decision", model.event, checkpoint, auto_start=True, system=system, payload=payload,
+                          language=getattr(model, "output_language", "en"))
     return model.call(system, payload, "assistant")
 
 
@@ -254,7 +255,7 @@ def run_tool(name, arguments, user, run_id, step, request):
         if name == "review_contract":
             db.execute(text("BEGIN IMMEDIATE"))
             job = create_job(db, user, args.contract_id, JobInput(instruction=args.instruction,
-                             skill_id=args.skill_id, language=request.get("language", "zh"), request_key=f"agent-{run_id}-{step}",
+                             skill_id=args.skill_id, language=request.get("language", "en"), request_key=f"agent-{run_id}-{step}",
                              model_mode=request.get("model_mode", ""),
                              ollama_model=request.get("ollama_model", "")),
                              model_snapshot=request.get("model_snapshot"))
@@ -320,7 +321,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
     available = {key: {"description": DESCRIPTIONS[key], "arguments_schema": compact_schema(model.model_json_schema())}
                  for key, model in TOOL_ARGS.items() if key in settings.agent_tools.split(",") and (request.get("allow_web", True) or key not in ("web_search", "read_webpage"))}
     system = "\n\n".join(load_prompt(name) for name in ("assistant_system", "tool", "reflection"))
-    system += "\n" + load_prompt("output_en" if request.get("language") == "en" else "output_zh")
+    system += "\n" + load_prompt("output_en" if request.get("language", "en") == "en" else "output_zh")
     observations = checkpoint("observations") or []
     sources, artifacts, reviews = [], [], []
     snapshot = request.get("model_snapshot")
@@ -330,6 +331,7 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
     snapshot = snapshot or {}
     model = Model(event, snapshot.get("model_mode") or settings.model_mode,
                   ollama_model=snapshot.get("ollama_model") or None)
+    model.output_language = request.get("language", "en")
     if model.mode == "ollama" and request.get("ollama_model"):
         model.require_local_ollama_model()
     model_info = {"mode": model.mode}
@@ -356,7 +358,8 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
             if demo_tool:
                 decision = {"action": "tool", **demo_tool}
             elif demo and step > 0:
-                decision = {"action": "final", "answer": "工具执行结果\n" + json.dumps(observations[-1]["result"], ensure_ascii=False, indent=2)[:12000]}
+                heading = "Tool result\n" if model.output_language == "en" else "工具执行结果\n"
+                decision = {"action": "final", "answer": heading + json.dumps(observations[-1]["result"], ensure_ascii=False, indent=2)[:12000]}
             else:
                 if model.mode != "tacc" or settings.tacc_protocol != "sdk":
                     event("model", "理解请求并选择工具", "")
@@ -409,12 +412,16 @@ def run_assistant(user_id, request, run_id, event, checkpoint, decide=None):
         observations.append({"tool": name, "arguments": arguments, "result": result})
         checkpoint("observations", observations)
         if isinstance(result, dict) and result.get("error") and prior_errors >= 1:
-            return {"answer": f"工具 {name} 连续两次执行失败，已停止重试。原因：{result['error']}。本次操作尚未完成。",
+            answer = (f"Tool {name} failed twice; retries have stopped. Reason: {result['error']}. The operation is incomplete."
+                      if model.output_language == "en" else f"工具 {name} 连续两次执行失败，已停止重试。原因：{result['error']}。本次操作尚未完成。")
+            return {"answer": answer,
                     "sources": sources, "artifacts": artifacts, "reviews": reviews, **model_info}
         collect_sources(result, sources)
         if name in ("create_document", "save_skill") and not result.get("error"):
             artifacts.append(result)
         if name == "review_contract" and result.get("job_id"):
             reviews.append(result)
-    return {"answer": "已到达本轮工具调用上限，请根据处理记录继续提问。", "sources": sources,
+    answer = ("The tool-call limit for this turn has been reached. Continue with a follow-up question."
+              if model.output_language == "en" else "已到达本轮工具调用上限，请根据处理记录继续提问。")
+    return {"answer": answer, "sources": sources,
             "artifacts": artifacts, "reviews": reviews, **model_info}

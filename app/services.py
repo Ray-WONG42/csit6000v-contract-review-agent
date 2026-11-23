@@ -82,7 +82,7 @@ def create_job(db, user, contract_id, body: JobInput, source="web", state="queue
     if existing:
         saved_skill = json.loads(existing.skill)
         if (existing.contract_id != contract_id or existing.instruction != body.instruction
-                or saved_skill.get("language", "zh") != body.language
+                or saved_skill.get("language", "en") != body.language
                 or saved_skill.get("requested_model_mode", "") != body.model_mode
                 or saved_skill.get("requested_ollama_model", "") != body.ollama_model):
             raise HTTPException(409, "此提交标识已用于另一个任务")
@@ -198,7 +198,7 @@ def graph_client():
     return Outlook()
 
 
-def send_mail(recipient, subject, body, file=None, in_reply_to="", language="zh"):
+def send_mail(recipient, subject, body, file=None, in_reply_to="", language="en"):
     if settings.demo_mail:
         with session() as db:
             db.add(LocalMail(recipient=recipient, subject=subject, body=body, file_id=file.id if file else ""))
@@ -236,7 +236,7 @@ def deliver_pending():
         file = db.get(File, job.report_file) if job.report_file else None
     try:
         result = json.loads(job.result)
-        language = json.loads(job.skill).get("language", "zh")
+        language = json.loads(job.skill).get("language", "en")
         message = result.get("message") or result.get("answer") or (
             "Contract review completed. See the attached report." if language == "en" else "合同处理已完成，报告见附件。")
         subject = f"Contract review result [{job.id[:8]}]" if language == "en" else f"合同审查结果 [{job.id[:8]}]"

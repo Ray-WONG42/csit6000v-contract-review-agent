@@ -300,8 +300,7 @@ class Model:
     def call(self, system, payload, phase):
         from app.config import settings
         start = time.perf_counter()
-        if getattr(self, "output_language", "zh") == "en":
-            system += "\n" + load_prompt("output_en")
+        system += "\n" + load_prompt("output_zh" if getattr(self, "output_language", "en") == "zh" else "output_en")
         usage = {}
         error = ""
         try:
@@ -599,7 +598,7 @@ def annotate(row, skill, definitions=None):
 def review(paragraphs, skill, instruction, model, method="retrieval", evaluation=False, checkpoint=None,
            vector_hits=None):
     started = time.perf_counter()
-    model.output_language = skill.get("language", "zh")
+    model.output_language = skill.get("language", "en")
     event = model.event
     definitions = custom_definitions(skill, instruction)
     categories, clarify = scope_plan(skill, instruction, model, definitions)
@@ -744,7 +743,7 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
             answer.append(row["label"] + "：" + ("未检出支持原文。" if row["status"] == "not_found" else "需要人工复核。"))
     result = {"state": state, "rows": results, "calls": model.calls, "answer": "\n\n".join(answer),
               "seconds": round(time.perf_counter() - started, 3), "model_mode": model.mode}
-    result["language"] = skill.get("language", "zh")
+    result["language"] = skill.get("language", "en")
     if model.mode == "api":
         from app.config import settings
         result["model_name"] = settings.model_name
@@ -755,7 +754,7 @@ def review(paragraphs, skill, instruction, model, method="retrieval", evaluation
 
 def report_text(name, result):
     from app.localization import text_for
-    tr = lambda value: text_for(value, result.get("language", "zh"))
+    tr = lambda value: text_for(value, result.get("language", "en"))
     lines = ["# 合同审查报告", "", f"审查对象：{name}", "",
              "本报告供人工复核。未找到对应原文表示本次未检出。",
              ""]
@@ -767,14 +766,14 @@ def report_text(name, result):
         lines.extend(f"{item['paragraph_id']} · {item['quote']}" for item in row["evidence"])
         lines.append("清单判断：" + row.get("assessment", "待核验"))
         lines.append(row.get("explanation", ""))
-        lines.extend((f"Checklist item · {tr(item['requirement'])}: {tr(item['assessment'])}" if result.get("language") == "en"
+        lines.extend((f"Checklist item · {tr(item['requirement'])}: {tr(item['assessment'])}" if result.get("language", "en") == "en"
                       else f"核对项 · {item['requirement']}：{item['assessment']}") for item in row.get("checklist", []))
         if row["missing"]:
             lines.append("待核对：" + "、".join(row["missing"]))
         if row["question"]:
             lines.append("建议问题：" + row["question"])
         lines.append("")
-    if result.get("language") == "en":
+    if result.get("language", "en") == "en":
         lines = [tr(line) for line in lines]
         lines = [line.replace("# 合同审查报告", "# Contract Review Report").replace("审查对象：", "Contract: ").replace("清单判断：", "Assessment: ").replace("待核对：", "To verify: ").replace("建议问题：", "Suggested question: ").replace("核对项 · ", "Checklist item · ") for line in lines]
         for index, line in enumerate(lines):
@@ -785,7 +784,7 @@ def report_text(name, result):
 
 def docx_report(content, result=None):
     from app.localization import text_for
-    tr = lambda value: text_for(value, (result or {}).get("language", "zh"))
+    tr = lambda value: text_for(value, (result or {}).get("language", "en"))
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
     from docx.oxml import OxmlElement
